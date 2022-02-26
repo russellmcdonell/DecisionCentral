@@ -307,7 +307,7 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
         # /delete/decisionServiceName - delete this decision service
 
         # Reset all the globals
-        self.data = DecisionCentralData('[desisionCentral-' + threading.currentThread().getName() + ']')
+        self.data = DecisionCentralData('[desisionCentral-' + threading.current_thread().name + ']')
 
         # Parse the URl
         request = urlparse(self.path)
@@ -599,7 +599,7 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
         # /api/decisionServiceName - this decision Service
 
         # Reset all the globals
-        self.data = DecisionCentralData('[desisionCentral-' + threading.currentThread().getName() + ']')
+        self.data = DecisionCentralData('[desisionCentral-' + threading.current_thread().name + ']')
 
         self.data.logger.info('POST {}'.format(self.headers))
 
@@ -1068,6 +1068,7 @@ Parse the command line arguments and set up general error logging.
 
     # Define the command line options
     parser = argparse.ArgumentParser(prog=progName)
+    parser.add_argument ('-p', '--port', dest='port', type=int, default=7777, help='The name of a logging directory')
     parser.add_argument ('-v', '--verbose', dest='verbose', type=int, choices=range(0,5),
                          help='The level of logging\n\t0=CRITICAL,1=ERROR,2=WARNING,3=INFO,4=DEBUG')
     parser.add_argument ('-L', '--logDir', dest='logDir', default='.', help='The name of a logging directory')
@@ -1076,6 +1077,7 @@ Parse the command line arguments and set up general error logging.
 
     # Parse the command line options
     args = parser.parse_args()
+    port = args.port
     loggingLevel = args.verbose
     logDir = args.logDir
     logFile = args.logFile
@@ -1124,22 +1126,22 @@ Parse the command line arguments and set up general error logging.
     print('Starting DecisionCental Service', file=sys.stdout)
     logger.propagate = True
     sys.stdout.flush()
-    httpd = ThreadedHTTPServer(('', 7777), decisionCentralHandler)
+    httpd = ThreadedHTTPServer(('', port), decisionCentralHandler)
     try:
-        print('Started httpserver on port', 7777, file=sys.stdout)
+        print('Started httpserver on port', port, file=sys.stdout)
         sys.stdout.flush()
         httpd.serve_forever()
     except KeyboardInterrupt:
-        print('Stopped httpserver on port', 7777, file=sys.stdout)
+        print('Stopped httpserver on port', port, file=sys.stdout)
         sys.stdout.flush()
 
     httpd.server_close()
     try:
-        ping = client.HTTPConnection('localhost', 77777)
+        ping = client.HTTPConnection('localhost', port)
         ping.request('GET', '/')
         response = ping.getresponse()
         ping.close()
-        ping = client.HTTPConnection('localhost', 77777)
+        ping = client.HTTPConnection('localhost', port)
         ping.request('GET', '/')
         response = ping.getresponse()
         ping.close()
