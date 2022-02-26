@@ -12,4 +12,6 @@ DecisionCentral
   - The decision tables that form this decision service
 * Creates an OpenAPI specification the the api associated with this decision service - displayed as a web page, but it can also be downloaded and imported to Postman/Swagger etc.
 
+DecisionCentral listens for http requests on port 7777 by default. The -p portNo option lets you assign a different port. However, DecisionCental can also be run in a container (it uses no disk storage - see the dockerfile) and you can use containter port mapping to map your desired port to 7777.
+
 DecisionCentral is not, of itself, a production product. You use pyDMNrules to build those. It is intended for use at Hackathons and Connectathons; anywhere you need a complex decision service created quickly and easily.
