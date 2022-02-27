@@ -4,7 +4,7 @@
 A script to build a web site as a central repository for DMN decision service.
 
 SYNOPSIS
-$ python DecisionCentral.py [-v loggingLevel|--verbose=logingLevel] [-L logDir|--logDir=logDir] [-l logfile|--logfile=logfile]
+$ python DecisionCentral.py [-v loggingLevel|--verbose=logingLevel] [-L logDir|--logDir=logDir] [-l logfile|--logfile=logfile] [-p portNo|--port=portNo]
 
 REQUIRED
 
@@ -18,6 +18,9 @@ The directory where the log file will be written.
 
 -l logfile|--logfile=logfile
 The name of a logging file where you want all messages captured.
+
+-p portNo|--port=portNo
+The port used for listening for http requests
 
 
 This script lets users upload Excel workbooks, which must comply to the DMN standard.
@@ -122,21 +125,31 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
             self.data.logger.info('POST - tokens {}'.format(yaccTokens))
             if len(yaccTokens) != 1:
                 return thisValue
+            elif yaccTokens[0].type == 'NUMBER':
+                    return float(thisValue)
             elif yaccTokens[0].type == 'NAME':
-                if thisValue == 'True':
+                if thisValue == 'true':
+                    return True
+                elif thisValue == 'True':
                     return True
                 elif thisValue == 'TRUE':
                     return True
+                elif thisValue == 'false':
+                    return False
                 elif thisValue == 'False':
                     return False
                 elif thisValue == 'FALSE':
                     return False
                 elif thisValue == 'none':
-                    return False
+                    return None
                 elif thisValue == 'None':
-                    return False
+                    return None
+                elif thisValue == 'null':
+                    return None
                 else:
                     return thisValue
+            elif yaccTokens[0].type == 'STRING':
+                return thisValue[1:-1]
             elif yaccTokens[0].type == 'DTDURATION':
                 sign = 0
                 if thisValue[0] == '-':
@@ -200,7 +213,7 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                         thisDateTime = thisDateTime
                 return thisDateTime
             elif yaccTokens[0].type == 'DATE':
-                return dateutil.parser.parse(p.expr).date()
+                return dateutil.parser.parse(thisValue).date()
             elif yaccTokens[0].type == 'TIME':
                 parts = thisValue.split('@')
                 thisTime =  dateutil.parser.parse(parts[0]).timetz()     # A time with timezone
@@ -218,14 +231,14 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
 
 
     def convertOut(self, thisValue):
-        if isinstance(value, datetime.date):
+        if isinstance(thisValue, datetime.date):
             return thisValue.isoformat()
-        elif isinstance(value, datetime.datetime):
+        elif isinstance(thisValue, datetime.datetime):
             return thisValue.isoformat(sep='T')
-        elif isinstance(value, datetime.time):
+        elif isinstance(thisValue, datetime.time):
             return thisValue.isoformat()
-        elif isinstance(value, datetime.timedelta):
-            duration = value.total_seconds()
+        elif isinstance(thisValue, datetime.timedelta):
+            duration = thisValue.total_seconds()
             secs = duration % 60
             duration = int(duration / 60)
             mins = duration % 60
@@ -776,7 +789,7 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
             self.message += '</body></html>'
             self.wfile.write(self.message.encode('utf-8'))
 
-        elif self.path[0:5] == '/api/':         # An API request for a decision
+        elif request.path[0:5] == '/api/':         # An API request for a decision
             name = unquote(request.path[5:])
             if name not in decisionServices:                # Check that we have this Decision Service
                 # Return Bad Request
@@ -801,116 +814,7 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                         thisVariable = variable.decode('ASCII').strip()
                         thisValue = params[variable][0].decode('ASCII').strip()
                         self.data.logger.info('POST {} {} {} {}'.format(thisVariable, thisValue, type(thisVariable), type(thisValue)))
-                        tokens = self.data.lexer.tokenize(thisValue)
-                        yaccTokens = []
-                        for token in tokens:
-                            yaccTokens.append(token)
-                        self.data.logger.info('POST - tokens {}'.format(yaccTokens))
-                        if len(yaccTokens) != 1:
-                            self.data.data[thisVariable] = thisValue
-                        elif yaccTokens[0].type == 'NUMBER':
-                            self.data.data[thisVariable] = float(thisValue)
-                        elif yaccTokens[0].type == 'NAME':
-                            if thisValue == 'true':
-                                self.data.data[thisVariable] = True
-                            elif thisValue == 'True':
-                                self.data.data[thisVariable] = True
-                            elif thisValue == 'TRUE':
-                                self.data.data[thisVariable] = True
-                            elif thisValue == 'false':
-                                self.data.data[thisVariable] = False
-                            elif thisValue == 'False':
-                                self.data.data[thisVariable] = False
-                            elif thisValue == 'FALSE':
-                                self.data.data[thisVariable] = False
-                            elif thisValue == 'none':
-                                self.data.data[thisVariable] = False
-                            elif thisValue == 'None':
-                                self.data.data[thisVariable] = False
-                            elif thisValue == 'null':
-                                self.data.data[thisVariable] = False
-                            else:
-                                self.data.data[thisVariable] = thisValue
-                        elif yaccTokens[0].type == 'STRING':
-                            self.data.data[thisVariable] = thisValue[1:-1]
-                        elif yaccTokens[0].type == 'DTDURATION':
-                            sign = 0
-                            if thisValue[0] == '-':
-                                sign = -1
-                                thisValue = thisValue[1:]     # skip -
-                            thisValue = thisValue[1:]         # skip P
-                            days = seconds = milliseconds = 0
-                            if thisValue[0] != 'T':          # days is optional
-                                parts = thisValue.split('D')
-                                if len(parts[0]) > 0:
-                                    days = int(parts[0])
-                                thisValue = parts[1]
-                            if len(thisValue) > 0:
-                                thisValue = thisValue[1:]         # Skip T
-                                parts = thisValue.split('H')
-                                if len(parts) == 2:
-                                    if len(parts[0]) > 0:
-                                        seconds = int(parts[0]) * 60 * 60
-                                    thisValue = parts[1]
-                                parts = thisValue.split('M')
-                                if len(parts) == 2:
-                                    if len(parts[0]) > 0:
-                                        seconds += int(parts[0]) * 60
-                                    thisValue = parts[1]
-                                parts = thisValue.split('S')
-                                if len(parts) == 2:
-                                    if len(parts[0]) > 0:
-                                        sPart = float(parts[0])
-                                        seconds += int(sPart)
-                                        milliseconds = int((sPart * 1000)) % 1000
-                            if sign == 0:
-                                self.data.data[thisVariable] = datetime.timedelta(days=days, seconds=seconds, milliseconds=milliseconds)
-                            else:
-                                self.data.data[thisVariable] = -datetime.timedelta(days=days, seconds=seconds, milliseconds=milliseconds)
-                        elif yaccTokens[0].type == 'YMDURATION':
-                            sign = 0
-                            if thisValue == '-':
-                                sign = -1
-                                thisValue = thisValue[1:]     # skip -
-                            thisValue = thisValue[1:]         # skip P
-                            months = 0
-                            parts = thisValue.split('Y')
-                            months = int(parts[0]) * 12
-                            parts = parts[1].split('M')
-                            if len(parts[0]) > 0:
-                                months += int(parts[0])
-                            if sign == 0:
-                                self.data.data[thisVariable] = int(months)
-                            else:
-                                self.data.data[thisVariable] = -int(months)
-                        elif yaccTokens[0].type == 'DATETIME':
-                            parts = thisValue.split('@')
-                            thisDateTime = dateutil.parser.parse(parts[0])
-                            if len(parts) > 1:
-                                thisZone = dateutil.tz.gettz(parts[1])
-                                if thisZone is not None:
-                                    try:
-                                        thisDateTime = thisDateTime.replace(tzinfo=thisZone)
-                                    except:
-                                        thisDateTime = thisDateTime
-                                    thisDateTime = thisDateTime
-                            self.data.data[thisVariable] = thisDateTime
-                        elif yaccTokens[0].type == 'DATE':
-                            self.data.data[thisVariable] = dateutil.parser.parse(p.expr).date()
-                        elif yaccTokens[0].type == 'TIME':
-                            parts = thisValue.split('@')
-                            thisTime =  dateutil.parser.parse(parts[0]).timetz()     # A time with timezone
-                            if len(parts) > 1:
-                                thisZone = dateutil.tz.gettz(parts[1])
-                                if thisZone is not None:
-                                    try:
-                                        thisTime = thisTime.replace(tzinfo=thisZone)
-                                    except:
-                                        thisTime = thisTime
-                                    thisTime = thisTime
-                            self.data.data[thisVariable] = thisTime
-                        else:
-                            self.data.data[thisVariable] = thisValue
+                        self.data.data[thisVariable] = self.convertIn(thisValue)
                 except:
                     # Return Bad Request
                     # Shutdown logging
@@ -937,8 +841,9 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                     self.send_error(400)
                     return
                 for thisVariable in self.data.data:
-                    thisValue = self.data.data[variable]
-                    self.data.data[thisValiable] = self.convertIn(thisValue)
+                    thisValue = self.data.data[thisVariable]
+                    self.data.logger.info('POST {} {} {} {}'.format(thisVariable, thisValue, type(thisVariable), type(thisValue)))
+                    self.data.data[thisVariable] = self.convertIn(thisValue)
 
             # Now make the decision
             self.data.logger.info('POST - making decision based upon {}'.format(self.data.data))
@@ -1023,7 +928,7 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                 self.message += '<p align="center"><b><a href="/">{}</a></b></p>'.format('Return to Decision Central')
                 self.wfile.write(self.message.encode('utf-8'))
         else:
-            self.data.logger.warning('POST - bad URL')
+            self.data.logger.warning('POST - bad URL - %s', request.path)
             # Return Bad Request
             # Shutdown logging
             for hdlr in self.data.logger.handlers:
