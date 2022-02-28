@@ -88,9 +88,9 @@ Parse the command line arguments and set up general error logging.
 
     # Define the command line options
     parser = argparse.ArgumentParser(prog=progName)
-    parser.add_argument ('-u', '--url', dest='url', default="http://localhost:7777/api/Example1", help='The URL of a decision service hosted by DecisionCentral')
-    parser.add_argument ('-i', '--inputCSV', dest='inputCSV', default="questions.csv", help='The name of the inputCSV file')
-    parser.add_argument ('-o', '--outputCSV', dest='outputCSV', default="answers.csv", help='The name of the outputCSV file')
+    parser.add_argument ('-u', '--url', dest='url', default="http://localhost:7777/api/Example1", help='The URL of a decision service hosted by DecisionCentral (default=http://localhost:7777/api/Example1)')
+    parser.add_argument ('-i', '--inputCSV', dest='inputCSV', default="questions.csv", help='The name of the inputCSV file (default=questions.csv)')
+    parser.add_argument ('-o', '--outputCSV', dest='outputCSV', default="answers.csv", help='The name of the outputCSV file (default=answers.csv)')
     parser.add_argument ('-v', '--verbose', dest='verbose', type=int, choices=range(0,5),
                          help='The level of logging\n\t0=CRITICAL,1=ERROR,2=WARNING,3=INFO,4=DEBUG')
     parser.add_argument ('-L', '--logDir', dest='logDir', default='.', help='The name of a logging directory')
@@ -231,15 +231,24 @@ Parse the command line arguments and set up general error logging.
                     header.append('Excuted Decision')
                     header.append('Decision Table')
                     header.append('Rule Id')
+                    header.append('Errors')
                     csvwriter.writerow(header)
                     needHeader = False
 
                 # Save the answer
+                print(answer)
+                sys.stdout.flush()
                 output = []
-                for key in answer['Result']:
-                    output.append(answer['Result'][key])
-                output.append(answer['Executed Rule'][0])
-                output.append(answer['Executed Rule'][1])
-                output.append(answer['Executed Rule'][2])
+                if 'errors' in answer['Status']:
+                    for i in range(len(header) - 1):
+                        output.append('')
+                    output.append('/'.join(answer['Status']['errors']))
+                else:
+                    for key in answer['Result']:
+                        output.append(answer['Result'][key])
+                    output.append(answer['Executed Rule'][0])
+                    output.append(answer['Executed Rule'][1])
+                    output.append(answer['Executed Rule'][2])
+                    output.append('')
                 csvwriter.writerow(output)
                 logging.info('Answer saved')

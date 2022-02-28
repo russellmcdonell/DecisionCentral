@@ -1,3 +1,7 @@
+### 0.0.4 Added Status to returned JSON
+ - Updated questioner.py for new Status
+ - Created flask version of Decision Central
+ - Fixed bug (not returning Executed Decision in JSON)
 ### 0.0.3 Fixed API bugs, added questioner.py and DMNexamples
  - questioner.py reads input data from a CSV file and exercises the API in Decision Central
  - DMNexamples contains DMN compliant workbooks which are know to work with pyDMNrules

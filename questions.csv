@@ -1,8 +1,11 @@
 "Applicant Age","Medical History"
 65,good
 65,bad
+65,ugly
 35,good
 35,bad
 35,ugly
 22,good
 22,bad
+22,ugly
+@"P69Y3M",0h - very good

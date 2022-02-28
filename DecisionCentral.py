@@ -213,7 +213,7 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                         thisDateTime = thisDateTime
                 return thisDateTime
             elif yaccTokens[0].type == 'DATE':
-                return dateutil.parser.parse(thisValue).date()
+                return dateutil.parser.parse(p.expr).date()
             elif yaccTokens[0].type == 'TIME':
                 parts = thisValue.split('@')
                 thisTime =  dateutil.parser.parse(parts[0]).timetz()     # A time with timezone
@@ -238,7 +238,7 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
         elif isinstance(thisValue, datetime.time):
             return thisValue.isoformat()
         elif isinstance(thisValue, datetime.timedelta):
-            duration = thisValue.total_seconds()
+            duration = value.total_seconds()
             secs = duration % 60
             duration = int(duration / 60)
             mins = duration % 60
@@ -290,6 +290,8 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
             for variable in glossary[concept]:
                 thisAPI.append('        "{}":'.format(variable))
                 thisAPI.append('          type: string')
+                thisAPI.append('          required: false')
+        thisAPI.append('      required: true')
         thisAPI.append('    decisionOutputData:')
         thisAPI.append('      type: object')
         thisAPI.append('      properties:')
@@ -300,10 +302,24 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
             for variable in glossary[concept]:
                 thisAPI.append('            "{}":'.format(variable))
                 thisAPI.append('              type: string')
+                thisAPI.append('              required: false')
+        thisAPI.append('          required: true')
         thisAPI.append('        "Executed Rule":')
         thisAPI.append('          type: array')
         thisAPI.append('          items:')
         thisAPI.append('            type: string')
+        thisAPI.append('            required: false')
+        thisAPI.append('          required: true')
+        thisAPI.append('        "Status":')
+        thisAPI.append('          type: object')
+        thisAPI.append('          properties:')
+        thisAPI.append('            "errors":')
+        thisAPI.append('              type: array')
+        thisAPI.append('              items:')
+        thisAPI.append('                type: string')
+        thisAPI.append('                required: false')
+        thisAPI.append('          required: true')
+        thisAPI.append('      required: true')
         return '\n'.join(thisAPI)
 
 
@@ -852,27 +868,36 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                 self.data.logger.warning('POST - bad status from decide()')
                 self.data.logger.warning(status)
 
-                # Return the error
-                self.send_response(200)
-                self.send_header('Content-type', 'text/html')
-                self.end_headers()
+                if accept_type == 'application/json':
+                    newData = {}
+                    newData['Result'] = {}
+                    newData['Executed Rule'] = []
+                    newData['Status'] = status
+                    self.data.response = json.dumps(newData)
+                    self.data.response = self.data.response.encode('utf-8')
+                    self.wfile.write(self.data.response)
+                else:
+                    # Return the error
+                    self.send_response(200)
+                    self.send_header('Content-type', 'text/html')
+                    self.end_headers()
 
-                # Assembling and send the HTML content
-                self.message = '<html><head><title>Decision Central - bad status from Decision Service {}</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'.format(name)
-                self.message += '<h2 align="center">Your Decision Service {} returned a bad status</h2>'.format(name)
-                self.message += '<pre>{}</pre>'.format(status)
-                self.message += '<p align="center"><b><a href="/">{}</a></b></p>'.format('Return to Decision Central')
-                self.message += '</body></html>'
-                self.wfile.write(self.message.encode('utf-8'))
-                # Shutdown logging
-                for hdlr in self.data.logger.handlers:
-                    hdlr.flush()
-                self.data.websh.flush()
-                self.data.logStream.close()
-                self.data.websh.close()
-                self.data.logger.removeHandler(self.data.websh)
-                del self.data
-                return
+                    # Assembling and send the HTML content
+                    self.message = '<html><head><title>Decision Central - bad status from Decision Service {}</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'.format(name)
+                    self.message += '<h2 align="center">Your Decision Service {} returned a bad status</h2>'.format(name)
+                    self.message += '<pre>{}</pre>'.format(status)
+                    self.message += '<p align="center"><b><a href="/">{}</a></b></p>'.format('Return to Decision Central')
+                    self.message += '</body></html>'
+                    self.wfile.write(self.message.encode('utf-8'))
+                    # Shutdown logging
+                    for hdlr in self.data.logger.handlers:
+                        hdlr.flush()
+                    self.data.websh.flush()
+                    self.data.logStream.close()
+                    self.data.websh.close()
+                    self.data.logger.removeHandler(self.data.websh)
+                    del self.data
+                    return
             self.data.logger.info('POST - it worked {}'.format(self.data.newData))
 
             # Check if JSON or HTML response required
@@ -890,6 +915,12 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                 for thisVariable in newData['Result']:
                     thisValue = newData['Result'][thisVariable]
                     newData['Result'][thisVariable] = self.convertOut(thisValue)
+                (executedDecision, decisionTable,ruleId) = self.data.newData['Executed Rule']
+                newData['Executed Rule'] = []
+                newData['Executed Rule'].append(executedDecision)
+                newData['Executed Rule'].append(decisionTable)
+                newData['Executed Rule'].append(ruleId)
+                newData['Status'] = status
                 self.data.response = json.dumps(newData)
                 self.data.response = self.data.response.encode('utf-8')
                 self.wfile.write(self.data.response)
