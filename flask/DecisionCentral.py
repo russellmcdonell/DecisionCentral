@@ -623,3 +623,6 @@ def decision_service(decisionServiceName):
         message += '</table>'
         message += '<p align="center"><b><a href="/">{}</a></b></p>'.format('Return to Decision Central')
         return message
+
+if __name__ == '__main__':
+    app.run(host="0.0.0.0")

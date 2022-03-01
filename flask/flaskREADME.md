@@ -1,4 +1,4 @@
-# DecisionCentral
+# A Flask version of DecisionCentral
 DecisionCentral is a central repository for all DMN based decision services.  
 
 DecisionCentral  
@@ -14,17 +14,13 @@ DecisionCentral
   - creates an OpenAPI specification for the the API associated with this decision service
     - It will be displayed as a web page, but it can also be downloaded and imported to Postman/Swagger etc.
 
-DecisionCentral listens for http requests on port 7777 by default. The -p portNo option lets you assign a different port. However, DecisionCental can also be run in a container (it uses no disk storage - see the dockerfile) and you can use containter port mapping to map your desired port to 7777.
+The Flask version of DecisionCentral listens for http requests on port 5000 by default.
 
-DecisionCentral can be run locally (see -h option for details).  
+The Flask version DecisionCentral can be run locally ($ python3 DecisionCentral.py)
 However can also be run in a container - dockerfile can be used to build a Docker image  
-\$ docker build -t decisioncentral:0.0.1 .  
+\$ docker build -t flaskdecisioncentral:0.0.1 .  
 And run under Docker Desktop  
-\$ docker run --name dockercentral -p 7777:7777 -d decisioncentral:0.0.1
-
-There is a flask version of DecisionCentral
-
-questioner.py is a client that calls a specified Decision Central API, passing data from questions.csv and storing the decisions in answers.csv
+\$ docker run --name flaskdockercentral -p 5000:5000 -d flaskdecisioncentral:0.0.1
 
 DecisionCentral is not, of itself, a production product. You use pyDMNrules to build those.  
 It is intended for use at Hackathons and Connectathons; anywhere you need a complex decision service created quickly and easily.

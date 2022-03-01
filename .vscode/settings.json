@@ -1,0 +1,4 @@
+{
+    "appService.defaultWebAppToDeploy": "/subscriptions/967875e9-2745-45a6-b959-20935b758baf/resourceGroups/appsvc_linux_centralus/providers/Microsoft.Web/sites/russellmcdonell-decisioncentral",
+    "appService.deploySubpath": "."
+}
