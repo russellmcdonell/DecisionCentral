@@ -222,7 +222,7 @@ def convertIn(thisValue):
                     thisDateTime = thisDateTime
             return thisDateTime
         elif yaccTokens[0].type == 'DATE':
-            return dateutil.parser.parse(p.expr).date()
+            return dateutil.parser.parse(thisValue).date()
         elif yaccTokens[0].type == 'TIME':
             parts = thisValue.split('@')
             thisTime =  dateutil.parser.parse(parts[0]).timetz()     # A time with timezone
@@ -247,7 +247,7 @@ def convertOut(thisValue):
     elif isinstance(thisValue, datetime.time):
         return thisValue.isoformat()
     elif isinstance(thisValue, datetime.timedelta):
-        duration = value.total_seconds()
+        duration = thisValue.total_seconds()
         secs = duration % 60
         duration = int(duration / 60)
         mins = duration % 60
@@ -303,7 +303,7 @@ def splash():
     message += 'This server can be rebooted at any time. When that hapepens everything is lost. You will need to re-upload you DMN compliant Excel workbooks in order to restore services. '
     message += 'There is no security/login requirements on this service. Anyone can upload their rules, using a Excel workbook with the same name as yours, thus replacing/corrupting your rules. '
     message += 'It is recommended that you obtain a copy of the source code from <a href="https://github.com/russellmcdonell/DecisionCentral">GitHub</a> and run it on your own server/laptop with appropriate security.'
-    message += 'However, this in not production ready software. It is built, using <a href="https://pypi.org/project/pyDMNrules/">pyDMNrules</a>. '
+    message += 'This in not production ready software. It is built, using <a href="https://pypi.org/project/pyDMNrules/">pyDMNrules</a>. '
     message += 'You can build production ready solutions using <b>pyDMNrules</b>, but this is not one of those solutions.</p>'
     return message
 
@@ -337,13 +337,13 @@ def upload_file():
     try:                # Convert file to workbook
         wb = load_workbook(filename=workbook)
     except Exception as e:
-        flask('bad workbook')
+        abort('bad workbook')
         return redirect(url_for('splash'))
 
     dmnRules = pyDMNrules.DMN()             # An empty Rules Engine
     status = dmnRules.use(wb)               # Add the rules from this DMN compliant Excel workbook
     if 'errors' in status:
-        flask('bad DMN rules')
+        abort('bad DMN rules')
         return redirect(url_for('splash'))
 
     # Add this decision service to the list
