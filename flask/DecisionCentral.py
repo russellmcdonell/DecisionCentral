@@ -44,6 +44,23 @@ def mkOpenAPI(glossary, name):
     thisAPI.append('info:')
     thisAPI.append('  title: Decision Service {}'.format(name))
     thisAPI.append('  version: 1.0.0')
+    if ('X-Forwarded-Host' in request.headers) and ('X-Forwarded-Proto' in request.headers):
+        thisAPI.append('servers:')
+        thisAPI.append('  [')
+        thisAPI.append('    "url":"{}://{}"'.format(request.headers['X-Forwarded-Proto'], request.headers['X-Forwarded-Host']))
+        thisAPI.append('  ]')
+    elif 'Host' in request.headers:
+        thisAPI.append('servers:')
+        thisAPI.append('  [')
+        thisAPI.append('    "url":"{}"'.format(request.headers['Host']))
+        thisAPI.append('  ]')
+    elif 'Forwarded' in request.headers:
+        forwards = request.headers['Forwarded'].split(';')
+        origin = forwards[0].split('=')[1]
+        thisAPI.append('servers:')
+        thisAPI.append('  [')
+        thisAPI.append('    "url":"{}"'.format(origin))
+        thisAPI.append('  ]')
     thisAPI.append('paths:')
     thisAPI.append('  /api/{}:'.format(quote(name)))
     thisAPI.append('    post:')
@@ -72,8 +89,6 @@ def mkOpenAPI(glossary, name):
         for variable in glossary[concept]:
             thisAPI.append('        "{}":'.format(variable))
             thisAPI.append('          type: string')
-            thisAPI.append('          required: false')
-    thisAPI.append('      required: true')
     thisAPI.append('    decisionOutputData:')
     thisAPI.append('      type: object')
     thisAPI.append('      properties:')
@@ -84,14 +99,10 @@ def mkOpenAPI(glossary, name):
         for variable in glossary[concept]:
             thisAPI.append('            "{}":'.format(variable))
             thisAPI.append('              type: string')
-            thisAPI.append('              required: false')
-    thisAPI.append('          required: true')
     thisAPI.append('        "Executed Rule":')
     thisAPI.append('          type: array')
     thisAPI.append('          items:')
     thisAPI.append('            type: string')
-    thisAPI.append('            required: false')
-    thisAPI.append('          required: true')
     thisAPI.append('        "Status":')
     thisAPI.append('          type: object')
     thisAPI.append('          properties:')
@@ -99,9 +110,11 @@ def mkOpenAPI(glossary, name):
     thisAPI.append('              type: array')
     thisAPI.append('              items:')
     thisAPI.append('                type: string')
-    thisAPI.append('                required: false')
-    thisAPI.append('          required: true')
-    thisAPI.append('      required: true')
+    thisAPI.append('      required: [')
+    thisAPI.append('        "Result",')
+    thisAPI.append('        "Executed Rule",')
+    thisAPI.append('        "Status"')
+    thisAPI.append('      ]')
     return '\n'.join(thisAPI)
 
 

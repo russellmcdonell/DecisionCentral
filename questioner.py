@@ -144,16 +144,27 @@ Parse the command line arguments and set up general error logging.
         logging.critical('No hostname in URL - try full URL - e.g. http://host:port/api/decisionService')
         logging.shutdown()
         sys.stdout.flush()
-        sys.exit(NO_HOST)
+        sys.exit(EX_NOHOST)
     decisionServiceHost = urlBits.hostname
+    logging.info('host:%s', decisionServiceHost)
     if urlBits.port is None:
-        decisionServicePort = 80
+        if urlBits.scheme == 'https':
+            logging.info('https - using port 443')
+            decisionServicePort = 443
+        else:
+            decisionServicePort = 80
     else:
         decisionServicePort = urlBits.port
+    logging.info('port:%s', decisionServicePort)
 
     decisionServiceHeaders = {'Content-type':'application/json', 'Accept':'application/json'}
+    logging.info('headers:%s', decisionServiceHeaders)
     try :
-        decisionServiceConnection = client.HTTPConnection(decisionServiceHost, decisionServicePort)
+        if urlBits.scheme == 'https':
+            logging.info('https - testing connection')
+            decisionServiceConnection = client.HTTPSConnection(decisionServiceHost, decisionServicePort)
+        else:
+            decisionServiceConnection = client.HTTPConnection(decisionServiceHost, decisionServicePort)
         decisionServiceConnection.close()
     except (client.NotConnected, client.InvalidURL, client.UnknownProtocol,client.UnknownTransferEncoding,client.UnimplementedFileMode,   client.IncompleteRead, client.ImproperConnectionState, client.CannotSendRequest, client.CannotSendHeader, client.ResponseNotReady, client.BadStatusLine) as e:
         logging.critical('Cannot connect to the decisionService Service on host (%s) and port (%s). Error:%s', decisionServiceHost, decisionServicePort, str(e))
@@ -196,11 +207,16 @@ Parse the command line arguments and set up general error logging.
                 logging.info('Questioning: %s', str(row))
                 params = json.dumps(row)
                 try :
-                    decisionServiceConnection = client.HTTPConnection(decisionServiceHost, decisionServicePort)
+                    if urlBits.scheme == 'https':
+                        logging.info('https - connecting')
+                        decisionServiceConnection = client.HTTPSConnection(decisionServiceHost, decisionServicePort)
+                    else:
+                        decisionServiceConnection = client.HTTPConnection(decisionServiceHost, decisionServicePort)
                     decisionServiceConnection.request('POST', url, params, decisionServiceHeaders)
                     response = decisionServiceConnection.getresponse()
                     if response.status != 200 :
                         logging.critical('Invalid response from Decision Service:error %s', str(response.status))
+                        logging.critical('%s', str(response.headers))
                         logging.shutdown()
                         sys.stdout.flush()
                         sys.exit(EX_PROTOCOL)

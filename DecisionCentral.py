@@ -213,7 +213,7 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                         thisDateTime = thisDateTime
                 return thisDateTime
             elif yaccTokens[0].type == 'DATE':
-                return dateutil.parser.parse(p.expr).date()
+                return dateutil.parser.parse(thisValue).date()
             elif yaccTokens[0].type == 'TIME':
                 parts = thisValue.split('@')
                 thisTime =  dateutil.parser.parse(parts[0]).timetz()     # A time with timezone
@@ -238,7 +238,7 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
         elif isinstance(thisValue, datetime.time):
             return thisValue.isoformat()
         elif isinstance(thisValue, datetime.timedelta):
-            duration = value.total_seconds()
+            duration = thisValue.total_seconds()
             secs = duration % 60
             duration = int(duration / 60)
             mins = duration % 60
@@ -262,6 +262,23 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
         thisAPI.append('info:')
         thisAPI.append('  title: Decision Service {}'.format(name))
         thisAPI.append('  version: 1.0.0')
+        if ('X-Forwarded-Host' in self.headers) and ('X-Forwarded-Proto' in self.headers):
+            thisAPI.append('servers:')
+            thisAPI.append('  [')
+            thisAPI.append('    "url":"{}://{}"'.format(self.headers['X-Forwarded-Proto'], self.headers['X-Forwarded-Host']))
+            thisAPI.append('  ]')
+        elif 'Host' in self.headers:
+            thisAPI.append('servers:')
+            thisAPI.append('  [')
+            thisAPI.append('    "url":"{}"'.format(self.headers['Host']))
+            thisAPI.append('  ]')
+        elif 'Forwarded' in self.headers:
+            forwards = self.headers['Forwarded'].split(';')
+            origin = forwards[0].split('=')[1]
+            thisAPI.append('servers:')
+            thisAPI.append('  [')
+            thisAPI.append('    "url":"{}"'.format(origin))
+            thisAPI.append('  ]')
         thisAPI.append('paths:')
         thisAPI.append('  /api/{}:'.format(quote(name)))
         thisAPI.append('    post:')
@@ -290,8 +307,6 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
             for variable in glossary[concept]:
                 thisAPI.append('        "{}":'.format(variable))
                 thisAPI.append('          type: string')
-                thisAPI.append('          required: false')
-        thisAPI.append('      required: true')
         thisAPI.append('    decisionOutputData:')
         thisAPI.append('      type: object')
         thisAPI.append('      properties:')
@@ -302,14 +317,10 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
             for variable in glossary[concept]:
                 thisAPI.append('            "{}":'.format(variable))
                 thisAPI.append('              type: string')
-                thisAPI.append('              required: false')
-        thisAPI.append('          required: true')
         thisAPI.append('        "Executed Rule":')
         thisAPI.append('          type: array')
         thisAPI.append('          items:')
         thisAPI.append('            type: string')
-        thisAPI.append('            required: false')
-        thisAPI.append('          required: true')
         thisAPI.append('        "Status":')
         thisAPI.append('          type: object')
         thisAPI.append('          properties:')
@@ -317,9 +328,11 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
         thisAPI.append('              type: array')
         thisAPI.append('              items:')
         thisAPI.append('                type: string')
-        thisAPI.append('                required: false')
-        thisAPI.append('          required: true')
-        thisAPI.append('      required: true')
+        thisAPI.append('      required: [')
+        thisAPI.append('        "Result",')
+        thisAPI.append('        "Executed Rule",')
+        thisAPI.append('        "Status"')
+        thisAPI.append('      ]')
         return '\n'.join(thisAPI)
 
 

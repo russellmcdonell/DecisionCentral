@@ -20,7 +20,7 @@ DecisionCentral can be run locally (see -h option for details).
 However can also be run in a container - dockerfile can be used to build a Docker image  
 \$ docker build -t decisioncentral:0.0.1 .  
 And run under Docker Desktop  
-\$ docker run --name dockercentral -p 7777:7777 -d decisioncentral:0.0.1
+\$ docker run --name decisioncentral -p 7777:7777 -d decisioncentral:0.0.1
 
 There is a flask version of DecisionCentral
 
