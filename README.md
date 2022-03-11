@@ -22,7 +22,8 @@ However can also be run in a container - dockerfile can be used to build a Docke
 And run under Docker Desktop  
 \$ docker run --name decisioncentral -p 7777:7777 -d decisioncentral:0.0.1
 
-There is a flask version of DecisionCentral
+There is a flask version of DecisionCentral which can also be run in a docker container
+NOTE: The flask versions listens for http requests on port 5000
 
 questioner.py is a client that calls a specified Decision Central API, passing data from questions.csv and storing the decisions in answers.csv
 

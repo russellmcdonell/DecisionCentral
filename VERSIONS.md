@@ -1,3 +1,5 @@
+#### 0.0.5 Updated requirements to the latest version of pyDMNrules
+ - for both main version (for docker) and flask version (also for docker)
 ### 0.0.4 Added Status to returned JSON
  - Updated questioner.py for new Status
  - Created flask version of Decision Central
