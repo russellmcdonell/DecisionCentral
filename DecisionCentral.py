@@ -410,6 +410,8 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
             if name in decisionServices:            # Show a Decision Service - an form for input data and the parts of the decision service
                 dmnRules = decisionServices[name]
                 self.data.logger.info('GET - type(dmnRules) {}'.format(type(dmnRules)))
+                glossaryNames = dmnRules.getGlossaryNames()
+                self.data.logger.info('GET - glossaryNames {}'.format(glossaryNames))
                 glossary = dmnRules.getGlossary()
                 self.data.logger.info('GET - glossary {}'.format(glossary))
                 sheets = dmnRules.getSheets()
@@ -423,7 +425,7 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                 # Assembling and send the HTML content
                 self.message = '<html><head><title>Decision Service {}</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'.format(name)
                 self.message += '<h2 align="center">Your Decision Service {}</h2>'.format(name)
-                self.message += '<table width="80%" align="center" style="font-size:120%">'
+                self.message += '<table align="center" style="font-size:120%">'
                 self.message += '<tr>'
                 self.message += '<th>Test Decision Service {}</th>'.format(name)
                 self.message += '<th>The Decision Services {} parts</th>'.format(name)
@@ -433,17 +435,20 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                 self.message += '<td>'
                 self.message += '<form id="form" action ="{}" method="post">'.format('/api/' + name)
                 self.message += '<h5>Enter values for these Variables</h5>'
-                self.message += '<table style="width:70%">'
-                for context in glossary:
+                self.message += '<table>'
+                for concept in glossary:
                     firstLine = True
-                    for variable in glossary[context]:
+                    for variable in glossary[concept]:
                         self.message += '<tr>'
                         if firstLine:
-                            self.message += '<td>{}</td><td style="width:20%;text-align=right">{}</td>'.format(context, variable)
+                            self.message += '<td>{}</td><td style="text-align=right">{}</td>'.format(concept, variable)
                             firstLine = False
                         else:
-                            self.message += '<td></td><td style="width:20%;text-align=right">{}</td>'.format(variable)
-                        self.message += '<td><input type="text" name="{}" style="width:80%;text-align=left"></input></td>'.format(variable)
+                            self.message += '<td></td><td style="text-align=right">{}</td>'.format(variable)
+                        self.message += '<td><input type="text" name="{}" style="text-align=left"></input></td>'.format(variable)
+                        if len(glossaryNames) > 1:
+                            (FEELname, variable, attributes) = glossary[concept][variable]
+                            self.message += '<td style="text-align=left">{}</td>'.format(attributes[0])
                         self.message += '</tr>'
                 self.message += '</table>'
                 self.message += '<h5>then click the "Make a Decision" button</h5>'
@@ -452,7 +457,7 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                 self.message += '</td>'
 
                 # And links for the Decision Service parts
-                self.message += '<td>'
+                self.message += '<td style="vertical-align=top">'
                 self.message += '<br/>'
                 self.message += '<a href="{}">{}</a>'.format(self.path + '/glossary', 'Glossary')
                 self.message += '<br/>'
@@ -491,6 +496,7 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                 part = bits[1]                      # The part to show
                 dmnRules = decisionServices[name]
                 if part == 'glossary':          # Show the Glossary for this Decision Service
+                    glossaryNames = dmnRules.getGlossaryNames()
                     glossary = dmnRules.getGlossary()
                     # Output the web page for the Glossary
                     # dict:{keys:Business Concept names, value:dict{keys:Variable names, value:tuple(FEELname, current value)}}
@@ -501,29 +507,39 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                     # Assembling and send the HTML content
                     self.message = '<html><head><title>Decision Service {} Glossary</title><link ref="icon" href="data:,"></head><body style="font-size:120%">'.format(name)
                     self.message += '<h2 align="center">The Glossary for the {} Decision Service</h2>'.format(name)
-                    self.message += '<table align="center" style="border-collapse:collapse;border:2px solid"><tr>'
-                    self.message += '<th style="border:2px solid">Variable</th><th style="border:2px solid">Business Concept</th><th style="border:2px solid">Attribute</th></tr>'
+                    self.message += '<div style="width:25%;background-color:black;color:white">{}</div>'.format('Glossary - ' + glossaryNames[0])
+                    self.message += '<table style="border-collapse:collapse;border:2px solid"><tr>'
+                    self.message += '<th style="border:2px solid;background-color:LightSteelBlue">Variable</th><th style="border:2px solid;background-color:LightSteelBlue">Business Concept</th><th style="border:2px solid;background-color:LightSteelBlue">Attribute</th>'
+                    if len(glossaryNames) > 1:
+                        for i in range(len(glossaryNames)):
+                            self.message += '<th style="border:2px solid;background-color:DarkSeaGreen">{}</th>'.format(glossaryNames[i])
                     for concept in glossary:
                         rowspan = len(glossary[concept].keys())
                         firstRow = True
                         for variable in glossary[concept]:
                             self.message += '<tr><td style="border:2px solid">{}</td>'.format(variable)
-                            (FEELname, value) = glossary[concept][variable]
+                            (FEELname, value, attributes) = glossary[concept][variable]
                             dotAt = FEELname.find('.')
                             if dotAt != -1:
                                 FEELname = FEELname[dotAt + 1:]
                             if firstRow:
                                 self.message += '<td rowspan="{}" style="border:2px solid">{}</td>'.format(rowspan, concept)
                                 firstRow = False
-                            self.message += '<td style="border:2px solid">{}</td></tr>'.format(FEELname)
+                            self.message += '<td style="border:2px solid">{}</td>'.format(FEELname)
+                            if len(glossaryNames) > 1:
+                                for i in range(len(glossaryNames) - 1):
+                                    self.message += '<td style="border:2px solid">{}</td>'.format(attributes[i])
+                            self.message += '</tr>'
                     self.message += '</table>'
                     self.message += '</body></html>'
                     self.message += '<p align="center"><b><a href="/show/{}">{} {}</a></b></p>'.format(name, 'Return to Decision Service', name)
                     self.wfile.write(self.message.encode('utf-8'))
                     return
                 elif part == 'decision':            # Show the Decision for this Decision Service
+                    decisionName = dmnRules.getDecisionName()
+                    self.data.logger.info('GET - decisionName {}'.format(decisionName))
                     decision = dmnRules.getDecision()
-                    self.data.logger.info('POST - decision {}'.format(decision))
+                    self.data.logger.info('GET - decision {}'.format(decision))
                     # Output the web page
                     self.send_response(200)
                     self.send_header('Content-type', 'text/html')
@@ -532,14 +548,30 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                     # Assembling and send the HTML content
                     self.message = '<html><head><title>Decision Service {} Decision Table</title><link ref="icon" href="data:,"></head><body style="font-size:120%">'.format(name)
                     self.message += '<h2 align="center">The Decision Table for the {} Decision Service</h2>'.format(name)
-                    self.message += '<table align="center" style="border-collapse:collapse;border:2px solid">'
+                    self.message += '<div style="width:25%;background-color:black;color:white">{}</div>'.format('Decision - ' + decisionName)
+                    self.message += '<table style="border-collapse:collapse;border:2px solid">'
+                    inInputs = True
+                    inDecide = False
                     for i in range(len(decision)):
                         self.message += '<tr>'
                         for j in range(len(decision[i])):
                             if i == 0:
-                                self.message += '<th style="border:2px solid">{}</th>'.format(decision[i][j])
+                                if decision[i][j] == 'Decisions':
+                                    inInputs = False
+                                    inDecide = True
+                                if inInputs:
+                                    self.message += '<th style="border:2px solid;background-color:DodgerBlue">{}</th>'.format(decision[i][j])
+                                elif inDecide:
+                                    self.message += '<th style="border:2px solid;background-color:LightSteelBlue">{}</th>'.format(decision[i][j])
+                                else:
+                                    self.message += '<th style="border:2px solid;background-color:DarkSeaGreen">{}</th>'.format(decision[i][j])
+                                if decision[i][j] == 'Execute Decision Tables':
+                                    inDecide = False
                             else:
-                                self.message += '<td style="border:2px solid">{}</td>'.format(decision[i][j])
+                                if decision[i][j] == '-':
+                                    self.message += '<td align="center" style="border:2px solid">{}</td>'.format(decision[i][j])
+                                else:
+                                    self.message += '<td style="border:2px solid">{}</td>'.format(decision[i][j])
                         self.message += '</tr>'
                     self.message += '</table>'
                     self.message += '<p align="center"><b><a href="/show/{}">{} {}</a></b></p>'.format(name, 'Return to Decision Service', name)

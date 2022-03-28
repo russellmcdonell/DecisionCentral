@@ -371,12 +371,13 @@ def show_decision_service(decisionServiceName):
 
     dmnRules = decisionServices[decisionServiceName]
     glossary = dmnRules.getGlossary()
+    glossaryNames = dmnRules.getGlossaryNames()
     sheets = dmnRules.getSheets()
 
     # Assembling and send the HTML content
     message = '<html><head><title>Decision Service {}</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'.format(decisionServiceName)
     message += '<h2 align="center">Your Decision Service {}</h2>'.format(decisionServiceName)
-    message += '<table width="80%" align="center" style="font-size:120%">'
+    message += '<table align="center" style="font-size:120%">'
     message += '<tr>'
     message += '<th>Test Decision Service {}</th>'.format(decisionServiceName)
     message += '<th>The Decision Services {} parts</th>'.format(decisionServiceName)
@@ -386,17 +387,20 @@ def show_decision_service(decisionServiceName):
     message += '<td>'
     message += '<form id="form" action ="{}" method="post">'.format(url_for('decision_service', decisionServiceName=decisionServiceName))
     message += '<h5>Enter values for these Variables</h5>'
-    message += '<table style="width:70%">'
+    message += '<table>'
     for concept in glossary:
         firstLine = True
         for variable in glossary[concept]:
             message += '<tr>'
             if firstLine:
-                message += '<td>{}</td><td style="width:20%;text-align=right">{}</td>'.format(concept, variable)
+                message += '<td>{}</td><td style="text-align=right">{}</td>'.format(concept, variable)
                 firstLine = False
             else:
-                message += '<td></td><td style="width:20%;text-align=right">{}</td>'.format(variable)
-            message += '<td><input type="text" name="{}" style="width:80%;text-align=left"></input></td>'.format(variable)
+                message += '<td></td><td style="text-align=right">{}</td>'.format(variable)
+            message += '<td><input type="text" name="{}" style="text-align=left"></input></td>'.format(variable)
+            if len(glossaryNames) > 1:
+                (FEELname, value, attributes) = glossary[concept][variable]
+                message += '<td style="text-align=left">{}</td>'.format(attributes[0])
             message += '</tr>'
     message += '</table>'
     message += '<h5>then click the "Make a Decision" button</h5>'
@@ -405,7 +409,7 @@ def show_decision_service(decisionServiceName):
     message += '</td>'
 
     # And links for the Decision Service parts
-    message += '<td>'
+    message += '<td style="vertical-align:top">'
     message += '<br/>'
     message += '<a href="{}">{}</a>'.format(url_for('show_decision_service_part', decisionServiceName=decisionServiceName, part='/glossary'), 'Glossary')
     message += '<br/>'
@@ -441,43 +445,70 @@ def show_decision_service_part(decisionServiceName, part):
 
     dmnRules = decisionServices[decisionServiceName]
     if part == 'glossary':          # Show the Glossary for this Decision Service
+        glossaryNames = dmnRules.getGlossaryNames()
         glossary = dmnRules.getGlossary()
 
         # Assembling and send the HTML content
         message = '<html><head><title>Decision Service {} Glossary</title><link ref="icon" href="data:,"></head><body style="font-size:120%">'.format(decisionServiceName)
         message += '<h2 align="center">The Glossary for the {} Decision Service</h2>'.format(decisionServiceName)
-        message += '<table align="center" style="border-collapse:collapse;border:2px solid"><tr>'
-        message += '<th style="border:2px solid">Variable</th><th style="border:2px solid">Business Concept</th><th style="border:2px solid">Attribute</th></tr>'
+        message += '<div style="width:25%;background-color:black;color:white">{}</div>'.format('Glossary - ' + glossaryNames[0])
+        message += '<table style="border-collapse:collapse;border:2px solid"><tr>'
+        message += '<th style="border:2px solid;background-color:LightSteelBlue">Variable</th><th style="border:2px solid;background-color:LightSteelBlue">Business Concept</th><th style="border:2px solid;background-color:LightSteelBlue">Attribute</th>'
+        if len(glossaryNames) > 1:
+            for i in range(1, len(glossaryNames)):
+                message += '<th style="border:2px solid;background-color:DarkSeaGreen">{}</th>'.format(glossaryNames[i])
+        message += '</tr>'
         for concept in glossary:
             rowspan = len(glossary[concept].keys())
             firstRow = True
             for variable in glossary[concept]:
                 message += '<tr><td style="border:2px solid">{}</td>'.format(variable)
-                (FEELname, value) = glossary[concept][variable]
+                (FEELname, value, attributes) = glossary[concept][variable]
                 dotAt = FEELname.find('.')
                 if dotAt != -1:
                     FEELname = FEELname[dotAt + 1:]
                 if firstRow:
                     message += '<td rowspan="{}" style="border:2px solid">{}</td>'.format(rowspan, concept)
                     firstRow = False
-                message += '<td style="border:2px solid">{}</td></tr>'.format(FEELname)
+                message += '<td style="border:2px solid">{}</td>'.format(FEELname)
+                if len(glossaryNames) > 1:
+                    for i in range(len(glossaryNames) - 1):
+                        message += '<td style="border:2px solid">{}</td>'.format(attributes[i])
+                message += '</tr>'
         message += '</table>'
         message += '<p align="center"><b><a href="{}">{}</a></b></p>'.format(url_for('show_decision_service', decisionServiceName=decisionServiceName), ('Return to Decision Service ' + decisionServiceName).replace(' ','&nbsp;'))
         return message
     elif part == 'decision':            # Show the Decision for this Decision Service
+        decisionName = dmnRules.getDecisionName()
         decision = dmnRules.getDecision()
 
         # Assembling and send the HTML content
         message = '<html><head><title>Decision Service {} Decision Table</title><link ref="icon" href="data:,"></head><body style="font-size:120%">'.format(decisionServiceName)
         message += '<h2 align="center">The Decision Table for the {} Decision Service</h2>'.format(decisionServiceName)
-        message += '<table align="center" style="border-collapse:collapse;border:2px solid">'
+        message += '<div style="width:25%;background-color:black;color:white">{}</div>'.format('Decision - ' + decisionName)
+        message += '<table style="border-collapse:collapse;border:2px solid">'
+        inInputs = True
+        inDecide = False
         for i in range(len(decision)):
             message += '<tr>'
             for j in range(len(decision[i])):
                 if i == 0:
-                    message += '<th style="border:2px solid">{}</th>'.format(decision[i][j])
+                    if decision[i][j] == 'Decisions':
+                        inInputs = False
+                        inDecide = True
+                    if inInputs:
+                        message += '<th style="border:2px solid;background-color:DodgerBlue">{}</th>'.format(decision[i][j])
+                    elif inDecide:
+                        message += '<th style="border:2px solid;background-color:LightSteelBlue">{}</th>'.format(decision[i][j])
+                    else:
+                        message += '<th style="border:2px solid;background-color:DarkSeaGreen">{}</th>'.format(decision[i][j])
+                    if decision[i][j] == 'Execute Decision Tables':
+                        inDecide = False
                 else:
-                    message += '<td style="border:2px solid">{}</td>'.format(decision[i][j])
+                    if decision[i][j] == '-':
+                        message += '<td align="center" style="border:2px solid">{}</td>'.format(decision[i][j])
+                    else:
+                        message += '<td style="border:2px solid">{}</td>'.format(decision[i][j])
             message += '</tr>'
         message += '</table>'
         message += '<p align="center"><b><a href="{}">{}</a></b></p>'.format(url_for('show_decision_service', decisionServiceName=decisionServiceName), ('Return to Decision Service ' + decisionServiceName).replace(' ','&nbsp;'))
