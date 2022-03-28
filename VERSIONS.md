@@ -1,4 +1,8 @@
-#### 0.0.5 Updated requirements to the latest version of pyDMNrules
+### 0.0.6 Added color to titles for Glossary and Decision
+ - Added support for Glossary names and Decision names
+ - Added support for Glossary annotations
+ - Made the first Glossary annotation hints for the User Input form
+### 0.0.5 Updated requirements to the latest version of pyDMNrules
  - for both main version (for docker) and flask version (also for docker)
 ### 0.0.4 Added Status to returned JSON
  - Updated questioner.py for new Status
