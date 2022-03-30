@@ -21,7 +21,7 @@ Once an Excel workbook has been uploaded and parsed successfully as a DMN compli
 import io
 import datetime
 import dateutil.parser, dateutil.tz
-from flask import Flask, flash, abort, jsonify, url_for, request, render_template, redirect, send_file
+from flask import Flask, flash, abort, jsonify, url_for, request, render_template, redirect, send_file, Response
 from markupsafe import Markup, escape
 from werkzeug.utils import secure_filename
 from urllib.parse import urlparse, urlencode, parse_qs, quote, unquote
@@ -115,6 +115,61 @@ def mkOpenAPI(glossary, name):
     thisAPI.append('        "Executed Rule",')
     thisAPI.append('        "Status"')
     thisAPI.append('      ]')
+    return '\n'.join(thisAPI)
+
+
+def mkUploadOpenAPI():
+    thisAPI = []
+    thisAPI.append('openapi: 3.0.0')
+    thisAPI.append('info:')
+    thisAPI.append('  title: Decision Service file upload API')
+    thisAPI.append('  version: 1.0.0')
+    if ('X-Forwarded-Host' in request.headers) and ('X-Forwarded-Proto' in request.headers):
+        thisAPI.append('servers:')
+        thisAPI.append('  [')
+        thisAPI.append('    "url":"{}://{}"'.format(request.headers['X-Forwarded-Proto'], request.headers['X-Forwarded-Host']))
+        thisAPI.append('  ]')
+    elif 'Host' in request.headers:
+        thisAPI.append('servers:')
+        thisAPI.append('  [')
+        thisAPI.append('    "url":"{}"'.format(request.headers['Host']))
+        thisAPI.append('  ]')
+    elif 'Forwarded' in request.headers:
+        forwards = request.headers['Forwarded'].split(';')
+        origin = forwards[0].split('=')[1]
+        thisAPI.append('servers:')
+        thisAPI.append('  [')
+        thisAPI.append('    "url":"{}"'.format(origin))
+        thisAPI.append('  ]')
+    thisAPI.append('paths:')
+    thisAPI.append('  /upload:')
+    thisAPI.append('    post:')
+    thisAPI.append('      summary: Upload a file to DecisionCentral')
+    thisAPI.append('      operationId: upload')
+    thisAPI.append('      requestBody:')
+    thisAPI.append('        description: json structure with one tag per item of passed data')
+    thisAPI.append('        content:')
+    thisAPI.append('          multipart/form-data:')
+    thisAPI.append('            schema:')
+    thisAPI.append("              $ref: '#/components/schemas/FileUpload'")
+    thisAPI.append('        required: true')
+    thisAPI.append('      responses:')
+    thisAPI.append('        201:')
+    thisAPI.append('          description: Item created')
+    thisAPI.append('          content:')
+    thisAPI.append('            text/html:')
+    thisAPI.append('              schema:')
+    thisAPI.append('                type: string')
+    thisAPI.append('        400:')
+    thisAPI.append('          description: Invalid input, object invalid')
+    thisAPI.append('components:')
+    thisAPI.append('  schemas:')
+    thisAPI.append('    FileUpload:')
+    thisAPI.append('      type: object')
+    thisAPI.append('      properties:')
+    thisAPI.append('        file:')
+    thisAPI.append('          type: string')
+    thisAPI.append('          format: binary')
     return '\n'.join(thisAPI)
 
 
@@ -270,7 +325,7 @@ def splash():
     message = '<html><head><title>Decision Central</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'
     message += '<h1 align="center">Welcolme to Decision Central</h1>'
     message += '<h3 align="center">Your home for all your DMN Decision Services</h3>'
-    message += '<div align="center"><b>Here you can create a Decsion Service by simply'
+    message += '<div align="center"><b>Here you can create a Decision Service by simply'
     message += '<br/>uploading a DMN compatible Excel workbook</b></div>'
     message += '<br/><table width="80%" align="center" style="font-size:120%">'
     message += '<tr>'
@@ -299,13 +354,36 @@ def splash():
     message += '</tr>'
     message += '<td></td>'
     message += '</table>'
+    message += '<p align="center"><b><a href="{}">{}</a></b></p>'.format(url_for('upload_api'), 'OpenAPI specification for Decision Central file upload')
     message += '<p><b><u>WARNING:</u></b>This is not a production service. '
-    message += 'This server can be rebooted at any time. When that hapepens everything is lost. You will need to re-upload you DMN compliant Excel workbooks in order to restore services. '
+    message += 'This server can be rebooted at any time. When that happens everything is lost. You will need to re-upload you DMN compliant Excel workbooks in order to restore services. '
     message += 'There is no security/login requirements on this service. Anyone can upload their rules, using a Excel workbook with the same name as yours, thus replacing/corrupting your rules. '
     message += 'It is recommended that you obtain a copy of the source code from <a href="https://github.com/russellmcdonell/DecisionCentral">GitHub</a> and run it on your own server/laptop with appropriate security.'
     message += 'This in not production ready software. It is built, using <a href="https://pypi.org/project/pyDMNrules/">pyDMNrules</a>. '
-    message += 'You can build production ready solutions using <b>pyDMNrules</b>, but this is not one of those solutions.</p>'
+    message += 'You can build production ready solutions using <b>pyDMNrules</b>, but this is not one of those solutions.</p></body></html>'
     return message
+
+
+@app.route('/uploadapi', methods=['GET'])
+def upload_api():
+        # Assembling and send the HTML content
+        message = '<html><head><title>Decision Service file upload Open API Specification</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'
+        message += '<h2 align="center">Open API Specification for Decision Service file upload</h2>'
+        message += '<pre>'
+        openapi = mkUploadOpenAPI()
+        message += openapi
+        message += '</pre>'
+        message += '<p align="center"><b><a href="{}">{}</a></b></p>'.format(url_for('download_upload_api'), 'Download the OpenAPI Specification for Decision Central file upload')
+        message += '<p align="center"><b><a href="{}">{}</a></b></p></body></html>'.format(url_for('splash'), 'Return to Decision Central')
+        return message
+
+
+@app.route('/downloaduploadapi', methods=['GET'])
+def download_upload_api():
+
+    yaml = io.BytesIO(bytes(mkUploadOpenAPI(), 'utf-8'))
+
+    return send_file(yaml, as_attachment=True, download_name='DecisionCentral_upload.yaml', mimetype='text/plain')
 
 
 @app.route('/upload', methods=['POST'])
@@ -316,19 +394,19 @@ def upload_file():
     if 'file' not in request.files:
         message = '<html><head><title>Decision Central - No file part</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'
         message += '<h2 align="center">No file part found in the upload request</h2>'
-        message += '<p align="center"><b><a href="{}">{}</a></b></p>'.format(url_for('splash'), 'Return to Decision Central')
+        message += '<p align="center"><b><a href="{}">{}</a></b></p></body></html>'.format(url_for('splash'), 'Return to Decision Central')
         return message
     file = request.files['file']
     if file.filename == '':
         message = '<html><head><title>Decision Central - No filename</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'
         message += '<h2 align="center">No filename found in the upload request</h2>'
-        message += '<p align="center"><b><a href="{}">{}</a></b></p>'.format(url_for('splash'), 'Return to Decision Central')
+        message += '<p align="center"><b><a href="{}">{}</a></b></p></body></html>'.format(url_for('splash'), 'Return to Decision Central')
         return message
     name = secure_filename(file.filename)
     if ('.' not in name) or (name.split('.')[-1].lower() not in ALLOWED_EXTENSIONS):
         message = '<html><head><title>Decision Central - invalid file extension</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'
         message += '<h2 align="center">Invalid file extension in the upload request</h2>'
-        message += '<p align="center"><b><a href="{}">{}</a></b></p>'.format(url_for('splash'), 'Return to Decision Central')
+        message += '<p align="center"><b><a href="{}">{}</a></b></p></body></html>'.format(url_for('splash'), 'Return to Decision Central')
         return message
 
     workbook = io.BytesIO()                 # Somewhere to store the DMN compliant Excel workbook
@@ -354,8 +432,8 @@ def upload_file():
     message = '<html><head><title>Decision Central - uploaded</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'
     message += '<h2 align="center">Your DMN compatible Excel workbook has been successfully uploaded</h2>'
     message += '<h3 align="center">Your Decision Service has been created</h3>'
-    message += '<p align="center"><b><a href="{}">{}</a></b></p>'.format(url_for('splash'), 'Return to Decision Central')
-    return message
+    message += '<p align="center"><b><a href="{}">{}</a></b></p></body></html>'.format(url_for('splash'), 'Return to Decision Central')
+    return Response(message, status=201)
 
 
 @app.route('/show/<decisionServiceName>', methods=['GET'])
@@ -366,7 +444,7 @@ def show_decision_service(decisionServiceName):
     if decisionServiceName not in decisionServices:
         message = '<html><head><title>Decision Central - no such Decision Service</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'
         message += '<h2 align="center">No decision service named {}</h2>'.format(decisionServiceName)
-        message += '<p align="center"><b><a href="{}">{}</a></b></p>'.format(url_for('splash'), 'Return to Decision Central')
+        message += '<p align="center"><b><a href="{}">{}</a></b></p></body></html>'.format(url_for('splash'), 'Return to Decision Central')
         return message
 
     dmnRules = decisionServices[decisionServiceName]
@@ -428,7 +506,7 @@ def show_decision_service(decisionServiceName):
     message += '<a href="{}">Delete the {} Decision Service</a>'.format(url_for('delete_decision_service', decisionServiceName=decisionServiceName), decisionServiceName.replace(' ', '&nbsp;'))
     message += '</td>'
     message += '</tr></table>'
-    message += '<p align="center"><b><a href="{}">{}</a></b></p>'.format(url_for('splash'), 'Return to Decision Central')
+    message += '<p align="center"><b><a href="{}">{}</a></b></p></body></html>'.format(url_for('splash'), 'Return to Decision Central')
     return message
 
 
@@ -440,7 +518,7 @@ def show_decision_service_part(decisionServiceName, part):
     if decisionServiceName not in decisionServices:
         message = '<html><head><title>Decision Central - no such Decision Service</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'
         message += '<h2 align="center">No decision service named {}</h2>'.format(decisionServiceName)
-        message += '<p align="center"><b><a href="{}">{}</a></b></p>'.format(url_for('splash'), 'Return to Decision Central')
+        message += '<p align="center"><b><a href="{}">{}</a></b></p></body></html>'.format(url_for('splash'), 'Return to Decision Central')
         return message
 
     dmnRules = decisionServices[decisionServiceName]
@@ -476,7 +554,7 @@ def show_decision_service_part(decisionServiceName, part):
                         message += '<td style="border:2px solid">{}</td>'.format(attributes[i])
                 message += '</tr>'
         message += '</table>'
-        message += '<p align="center"><b><a href="{}">{}</a></b></p>'.format(url_for('show_decision_service', decisionServiceName=decisionServiceName), ('Return to Decision Service ' + decisionServiceName).replace(' ','&nbsp;'))
+        message += '<p align="center"><b><a href="{}">{}</a></b></p></body></html>'.format(url_for('show_decision_service', decisionServiceName=decisionServiceName), ('Return to Decision Service ' + decisionServiceName).replace(' ','&nbsp;'))
         return message
     elif part == 'decision':            # Show the Decision for this Decision Service
         decisionName = dmnRules.getDecisionName()
@@ -511,7 +589,7 @@ def show_decision_service_part(decisionServiceName, part):
                         message += '<td style="border:2px solid">{}</td>'.format(decision[i][j])
             message += '</tr>'
         message += '</table>'
-        message += '<p align="center"><b><a href="{}">{}</a></b></p>'.format(url_for('show_decision_service', decisionServiceName=decisionServiceName), ('Return to Decision Service ' + decisionServiceName).replace(' ','&nbsp;'))
+        message += '<p align="center"><b><a href="{}">{}</a></b></p></body></html>'.format(url_for('show_decision_service', decisionServiceName=decisionServiceName), ('Return to Decision Service ' + decisionServiceName).replace(' ','&nbsp;'))
         return message
     elif part == 'api':         # Show the OpenAPI definition for this Decision Service
         glossary = dmnRules.getGlossary()
@@ -524,21 +602,21 @@ def show_decision_service_part(decisionServiceName, part):
         message += openapi
         message += '</pre>'
         message += '<p align="center"><b><a href="{}">{} {}</a></b></p>'.format(url_for('download_decision_service_api', decisionServiceName=decisionServiceName), 'Download the OpenAPI Specification for Decision Service', decisionServiceName)
-        message += '<p align="center"><b><a href="{}">{}</a></b></p>'.format(url_for('show_decision_service', decisionServiceName=decisionServiceName), ('Return to Decision Service ' + decisionServiceName).replace(' ','&nbsp;'))
+        message += '<p align="center"><b><a href="{}">{}</a></b></p></body></html>'.format(url_for('show_decision_service', decisionServiceName=decisionServiceName), ('Return to Decision Service ' + decisionServiceName).replace(' ','&nbsp;'))
         return message
     else:                       # Show a worksheet
         sheets = dmnRules.getSheets()
         if part not in sheets:
             message = '<html><head><title>Decision Central - no such Decision Table</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'
             message += '<h2 align="center">No decision table named {}</h2>'.format(part)
-            message += '<p align="center"><b><a href="{}">{}</a></b></p>'.format(url_for('splash'), 'Return to Decision Central')
+            message += '<p align="center"><b><a href="{}">{}</a></b></p></body></html>'.format(url_for('splash'), 'Return to Decision Central')
             return message
 
         # Assembling and send the HTML content
         message = '<html><head><title>Decision Service {} sheet "{}"</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'.format(decisionServiceName, part)
         message += '<h2 align="center">The Decision sheet "{}" for Decision Service {}</h2>'.format(part, decisionServiceName)
         message += sheets[part]
-        message += '<p align="center"><b><a href="{}">{}</a></b></p>'.format(url_for('show_decision_service', decisionServiceName=decisionServiceName), ('Return to Decision Service ' + decisionServiceName).replace(' ','&nbsp;'))
+        message += '<p align="center"><b><a href="{}">{}</a></b></p></body></html>'.format(url_for('show_decision_service', decisionServiceName=decisionServiceName), ('Return to Decision Service ' + decisionServiceName).replace(' ','&nbsp;'))
         return message
 
 
@@ -547,7 +625,7 @@ def download_decision_service_api(decisionServiceName):
     if decisionServiceName not in decisionServices:
         message = '<html><head><title>Decision Central - no such Decision Service</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'
         message += '<h2 align="center">No decision service named {}</h2>'.format(decisionServiceName)
-        message += '<p align="center"><b><a href="{}">{}</a></b></p>'.format(url_for('splash'), 'Return to Decision Central')
+        message += '<p align="center"><b><a href="{}">{}</a></b></p></body></html>'.format(url_for('splash'), 'Return to Decision Central')
         return message
 
     dmnRules = decisionServices[decisionServiceName]
@@ -567,13 +645,13 @@ def delete_decision_service(decisionServiceName):
     if decisionServiceName not in decisionServices:
         message = '<html><head><title>Decision Central - no such Decision Service</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'
         message += '<h2 align="center">No decision service named {}</h2>'.format(decisionServiceName)
-        message += '<p align="center"><b><a href="{}">{}</a></b></p>'.format(url_for('splash'), 'Return to Decision Central')
+        message += '<p align="center"><b><a href="{}">{}</a></b></p></body></html>'.format(url_for('splash'), 'Return to Decision Central')
         return message
 
     del decisionServices[decisionServiceName]
     message = '<html><head><title>Decision Central - delete</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'
     message += '<h3 align="center">Decision Service {} has been deleted</h3>'.format(decisionServiceName)
-    message += '<p align="center"><b><a href="/">{}</a></b></p>'.format('Return to Decision Central')
+    message += '<p align="center"><b><a href="/">{}</a></b></p></body></html>'.format('Return to Decision Central')
     return message
 
 
@@ -586,7 +664,7 @@ def decision_service(decisionServiceName):
         if request.content_type == 'application/x-www-form-urlencoded':         # From the web page
             message = '<html><head><title>Decision Central - no such Decision Service</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'
             message += '<h2 align="center">No decision service named {}</h2>'.format(decisionServiceName)
-            message += '<p align="center"><b><a href="{}">{}</a></b></p>'.format(url_for('splash'), 'Return to Decision Central')
+            message += '<p align="center"><b><a href="{}">{}</a></b></p></body></html>'.format(url_for('splash'), 'Return to Decision Central')
             return message
         else:
             abort(400)
@@ -617,7 +695,7 @@ def decision_service(decisionServiceName):
             message = '<html><head><title>Decision Central - bad status from Decision Service {}</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'.format(decisionServiceName)
             message += '<h2 align="center">Your Decision Service {} returned a bad status</h2>'.format(decisionServiceName)
             message += '<pre>{}</pre>'.format(status)
-            message += '<p align="center"><b><a href="{}">{}</a></b></p>'.format(url_for('splash'), 'Return to Decision Central')
+            message += '<p align="center"><b><a href="{}">{}</a></b></p></body></html>'.format(url_for('splash'), 'Return to Decision Central')
             return message
         else:
             newData = {}
@@ -665,7 +743,7 @@ def decision_service(decisionServiceName):
         message += '<td style="border:2px solid">{}</td></tr>'.format(ruleId)
         message += '<tr>'
         message += '</table>'
-        message += '<p align="center"><b><a href="/">{}</a></b></p>'.format('Return to Decision Central')
+        message += '<p align="center"><b><a href="/">{}</a></b></p></body></html>'.format('Return to Decision Central')
         return message
 
 if __name__ == '__main__':

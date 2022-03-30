@@ -336,6 +336,60 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
         return '\n'.join(thisAPI)
 
 
+    def mkUploadOpenAPI(self):
+        thisAPI = []
+        thisAPI.append('openapi: 3.0.0')
+        thisAPI.append('info:')
+        thisAPI.append('  title: Decision Service file upload API')
+        thisAPI.append('  version: 1.0.0')
+        if ('X-Forwarded-Host' in self.headers) and ('X-Forwarded-Proto' in self.headers):
+            thisAPI.append('servers:')
+            thisAPI.append('  [')
+            thisAPI.append('    "url":"{}://{}"'.format(self.headers['X-Forwarded-Proto'], self.headers['X-Forwarded-Host']))
+            thisAPI.append('  ]')
+        elif 'Host' in self.headers:
+            thisAPI.append('servers:')
+            thisAPI.append('  [')
+            thisAPI.append('    "url":"{}"'.format(self.headers['Host']))
+            thisAPI.append('  ]')
+        elif 'Forwarded' in self.headers:
+            forwards = self.headers['Forwarded'].split(';')
+            origin = forwards[0].split('=')[1]
+            thisAPI.append('servers:')
+            thisAPI.append('  [')
+            thisAPI.append('    "url":"{}"'.format(origin))
+            thisAPI.append('  ]')
+        thisAPI.append('paths:')
+        thisAPI.append('  /upload:')
+        thisAPI.append('    post:')
+        thisAPI.append('      summary: Upload a file to DecisionCentral')
+        thisAPI.append('      operationId: upload')
+        thisAPI.append('      requestBody:')
+        thisAPI.append('        description: json structure with one tag per item of passed data')
+        thisAPI.append('        content:')
+        thisAPI.append('          multipart/form-data:')
+        thisAPI.append('            schema:')
+        thisAPI.append("              $ref: '#/components/schemas/FileUpload'")
+        thisAPI.append('        required: true')
+        thisAPI.append('      responses:')
+        thisAPI.append('        201:')
+        thisAPI.append('          description: Item created')
+        thisAPI.append('          content:')
+        thisAPI.append('            text/html:')
+        thisAPI.append('              schema:')
+        thisAPI.append('                type: string')
+        thisAPI.append('        400:')
+        thisAPI.append('          description: Invalid input, object invalid')
+        thisAPI.append('components:')
+        thisAPI.append('  schemas:')
+        thisAPI.append('    FileUpload:')
+        thisAPI.append('      type: object')
+        thisAPI.append('      properties:')
+        thisAPI.append('        file:')
+        thisAPI.append('          type: string')
+        thisAPI.append('          format: binary')
+        return '\n'.join(thisAPI)
+
 
     def do_GET(self):
 
@@ -365,7 +419,7 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
             self.message = '<html><head><title>Decision Central</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'
             self.message += '<h1 align="center">Welcolme to Decision Central</h1>'
             self.message += '<h3 align="center">Your home for all your DMN Decision Services</h3>'
-            self.message += '<div align="center"><b>Here you can create a Decsion Service by simply'
+            self.message += '<div align="center"><b>Here you can create a Decision Service by simply'
             self.message += '<br/>uploading a DMN compatible Excel workbook</b></div>'
             self.message += '<br/><table width="80%" align="center" style="font-size:120%">'
             self.message += '<tr>'
@@ -394,14 +448,45 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
             self.message += '</tr>'
             self.message += '<td></td>'
             self.message += '</table>'
+            self.message += '<p align="center"><b><a href="{}">{}</a></b></p>'.format(self.path + 'uploadapi', 'OpenAPI specification for Decision Central file upload')
             self.message += '<p><b><u>WARNING:</u></b>This is not a production service. '
-            self.message += 'This server can be rebooted at any time. When that hapepens everything is lost. You will need to re-upload you DMN compliant Excel workbooks in order to restore services. '
+            self.message += 'This server can be rebooted at any time. When that happens everything is lost. You will need to re-upload you DMN compliant Excel workbooks in order to restore services. '
             self.message += 'There is no security/login requirements on this service. Anyone can upload their rules, using a Excel workbook with the same name as yours, thus replacing/corrupting your rules. '
             self.message += 'It is recommended that you obtain a copy of the source code from <a href="https://github.com/russellmcdonell/DecisionCentral">GitHub</a> and run it on your own server/laptop with appropriate security.'
             self.message += 'However, this in not production ready software. It is built, using <a href="https://pypi.org/project/pyDMNrules/">pyDMNrules</a>. '
             self.message += 'You can build production ready solutions using <b>pyDMNrules</b>, but this is not one of those solutions.</p>'
             self.message += '</body></html>'
             self.wfile.write(self.message.encode('utf-8'))
+            return
+        elif request.path == '/uploadapi':         # The file upload OpenAPI Specification
+            self.data.logger.info('GET {}'.format(self.path))
+            # Output the web page
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html')
+            self.end_headers()
+
+            # Assembling and send the HTML content
+            self.data.logger.info('GET {}'.format(self.path))
+            self.message = '<html><head><title>Decision Central</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'
+            self.message += '<h2 align="center">Open API Specification for Decision Service file upload</h2>'
+            self.message += '<pre>'
+            openapi = self.mkUploadOpenAPI()
+            self.message += openapi
+            self.message += '</pre>'
+            self.message += '<p align="center"><b><a href="{}">{}</a></b></p>'.format('/downloaduploadapi', 'Download the OpenAPI Specification for Decision Central file upload')
+            self.message += '<p align="center"><b><a href="/">{}</a></b></p>'.format('Return to Decision Central')
+            self.message += '</body></html>'
+            self.wfile.write(self.message.encode('utf-8'))
+        elif request.path == '/downloaduploadapi':         # Download the file upload OpenAPI Specification
+            self.data.logger.info('GET {}'.format(self.path))
+            openapi = self.mkUploadOpenAPI()
+
+            # Output the web page
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.send_header('Content-Disposition', 'attachement; filename="DecisionCentral_upload.yaml"')
+            self.end_headers()
+            self.wfile.write(openapi.encode('utf-8'))
             return
         elif request.path[0:6] == '/show/':         # Show Decision Service or Decision Service Part
             self.data.logger.info('GET {}'.format(self.path))
@@ -533,6 +618,7 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                     self.message += '</table>'
                     self.message += '</body></html>'
                     self.message += '<p align="center"><b><a href="/show/{}">{} {}</a></b></p>'.format(name, 'Return to Decision Service', name)
+                    self.message += '</body></html>'
                     self.wfile.write(self.message.encode('utf-8'))
                     return
                 elif part == 'decision':            # Show the Decision for this Decision Service
@@ -838,7 +924,7 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
             decisionServices[filename] = copy.deepcopy(dmnRules)
 
             # Output the web page
-            self.send_response(200)
+            self.send_response(201)
             self.send_header('Content-type', 'text/html')
             self.end_headers()
 
@@ -1002,6 +1088,7 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                 self.message += '<tr>'
                 self.message += '</table>'
                 self.message += '<p align="center"><b><a href="/">{}</a></b></p>'.format('Return to Decision Central')
+                self.message += '</body></html>'
                 self.wfile.write(self.message.encode('utf-8'))
         else:
             self.data.logger.warning('POST - bad URL - %s', request.path)
