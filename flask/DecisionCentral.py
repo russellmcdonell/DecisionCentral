@@ -19,6 +19,7 @@ Once an Excel workbook has been uploaded and parsed successfully as a DMN compli
 
 # Import all the modules that make life easy
 import io
+import sys
 import datetime
 import dateutil.parser, dateutil.tz
 from flask import Flask, flash, abort, jsonify, url_for, request, render_template, redirect, send_file, Response
@@ -31,7 +32,8 @@ import pySFeel
 import copy
 import logging
 
-ALLOWED_EXTENSIONS = {'xlsx'}
+Excel_EXTENSIONS = {'xlsx', 'xlsm'}
+ALLOWED_EXTENSIONS = {'xlsx', 'xlsm', 'xml', 'dmn'}
 
 app = Flask(__name__)
 
@@ -98,11 +100,22 @@ def mkOpenAPI(glossary, name):
     for concept in glossary:
         for variable in glossary[concept]:
             thisAPI.append('            "{}":'.format(variable))
-            thisAPI.append('              type: string')
+            thisAPI.append('              type: object')
+            thisAPI.append('              additionalProperties:')
+            thisAPI.append('                oneOf:')
+            thisAPI.append('                  - type: string')
+            thisAPI.append('                  - type: array')
+            thisAPI.append('                    items:')
+            thisAPI.append('                      type: string')
     thisAPI.append('        "Executed Rule":')
     thisAPI.append('          type: array')
     thisAPI.append('          items:')
-    thisAPI.append('            type: string')
+    thisAPI.append('            additionalProperties:')
+    thisAPI.append('              oneOf:')
+    thisAPI.append('                - type: string')
+    thisAPI.append('                - type: array')
+    thisAPI.append('                  items:')
+    thisAPI.append('                    type: string')
     thisAPI.append('        "Status":')
     thisAPI.append('          type: object')
     thisAPI.append('          properties:')
@@ -183,14 +196,26 @@ def convertIn(thisValue):
         for i in range(len(thisValue)):
             thisValue[i] = convertIn(thisValue[i])
     elif isinstance(thisValue, str):
+        if thisValue == '':
+            return None
         tokens = lexer.tokenize(thisValue)
         yaccTokens = []
         for token in tokens:
             yaccTokens.append(token)
         if len(yaccTokens) != 1:
-            return thisValue
+            if (thisValue[0] != '"') or (thisValue[-1] != '"'):
+                return '"' + thisValue + '"'
+            else:
+                return thisValue
         elif yaccTokens[0].type == 'NUMBER':
                 return float(thisValue)
+        elif yaccTokens[0].type == 'BOOLEAN':
+            if thisValue == 'true':
+                return True
+            elif thisValue == 'false':
+                return False
+            elif thisValue == 'null':
+                return None
         elif yaccTokens[0].type == 'NAME':
             if thisValue == 'true':
                 return True
@@ -214,6 +239,8 @@ def convertIn(thisValue):
                 return thisValue
         elif yaccTokens[0].type == 'STRING':
             return thisValue[1:-1]
+        elif yaccTokens[0].type == 'NUMBER':
+            return float(thisValue)
         elif yaccTokens[0].type == 'DTDURATION':
             sign = 0
             if thisValue[0] == '-':
@@ -292,6 +319,8 @@ def convertIn(thisValue):
             return thisTime
         else:
             return thisValue
+    else:
+        return thisValue
 
 
 def convertOut(thisValue):
@@ -374,6 +403,7 @@ def upload_api():
         message += openapi
         message += '</pre>'
         message += '<p align="center"><b><a href="{}">{}</a></b></p>'.format(url_for('download_upload_api'), 'Download the OpenAPI Specification for Decision Central file upload')
+        message += '<div align="center">[curl {}{}]</div>'.format(urlparse(request.base_url).hostname, url_for('download_upload_api'))
         message += '<p align="center"><b><a href="{}">{}</a></b></p></body></html>'.format(url_for('splash'), 'Return to Decision Central')
         return message
 
@@ -395,37 +425,54 @@ def upload_file():
         message = '<html><head><title>Decision Central - No file part</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'
         message += '<h2 align="center">No file part found in the upload request</h2>'
         message += '<p align="center"><b><a href="{}">{}</a></b></p></body></html>'.format(url_for('splash'), 'Return to Decision Central')
-        return message
+        return Response(message, status=400)
     file = request.files['file']
     if file.filename == '':
         message = '<html><head><title>Decision Central - No filename</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'
         message += '<h2 align="center">No filename found in the upload request</h2>'
         message += '<p align="center"><b><a href="{}">{}</a></b></p></body></html>'.format(url_for('splash'), 'Return to Decision Central')
-        return message
+        return Response(message, status=400)
     name = secure_filename(file.filename)
     if ('.' not in name) or (name.split('.')[-1].lower() not in ALLOWED_EXTENSIONS):
         message = '<html><head><title>Decision Central - invalid file extension</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'
         message += '<h2 align="center">Invalid file extension in the upload request</h2>'
         message += '<p align="center"><b><a href="{}">{}</a></b></p></body></html>'.format(url_for('splash'), 'Return to Decision Central')
-        return message
+        return Response(message, status=400)
+    extn = name.split('.')[-1].lower()
 
-    workbook = io.BytesIO()                 # Somewhere to store the DMN compliant Excel workbook
-    file.save(workbook)
-    # Create a Decision Service from the uploaded file
-    try:                # Convert file to workbook
-        wb = load_workbook(filename=workbook)
-    except Exception as e:
-        abort('bad workbook')
-        return redirect(url_for('splash'))
+    if extn in Excel_EXTENSIONS:
+        name = file.filename
+        decisionServiceName = name[:-5]
+        workbook = io.BytesIO()                 # Somewhere to store the DMN compliant Excel workbook
+        file.save(workbook)
+        # Create a Decision Service from the uploaded file
+        try:                # Convert file to workbook
+            wb = load_workbook(filename=workbook)
+        except Exception as e:
+            message = '<html><head><title>Decision Central - Bad Excel workbook</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'
+            message += '<h2 align="center">Bad Excel workbook</h2>'
+            message += '<p align="center"><b><a href="{}">{}</a></b></p></body></html>'.format(url_for('splash'), 'Return to Decision Central')
+            return Response(message, status=400)
 
-    dmnRules = pyDMNrules.DMN()             # An empty Rules Engine
-    status = dmnRules.use(wb)               # Add the rules from this DMN compliant Excel workbook
+        dmnRules = pyDMNrules.DMN()             # An empty Rules Engine
+        status = dmnRules.use(wb)               # Add the rules from this DMN compliant Excel workbook
+    else:
+        name = file.filename
+        decisionServiceName = name[:-4]
+        xml = file.read()
+        # Create a Decision Service from the uploaded file
+        dmnRules = pyDMNrules.DMN()             # An empty Rules Engine
+        status = dmnRules.useXML(xml)            # Add the rules from this DMN compliant XML file
+
     if 'errors' in status:
-        abort('bad DMN rules')
-        return redirect(url_for('splash'))
+        message = '<html><head><title>Decision Central - Invalid DMN</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'
+        message += '<h2 align="center">There were Errors in your DMN rules</h2>'
+        for i in range(len(status['errors'])):
+            message += '<pre>{}</pre>'.format(status['errors'][i])
+        message += '<p align="center"><b><a href="{}">{}</a></b></p></body></html>'.format(url_for('splash'), 'Return to Decision Central')
+        return Response(message, status=400)
 
     # Add this decision service to the list
-    decisionServiceName = name[:-5]
     decisionServices[decisionServiceName] = copy.deepcopy(dmnRules)
 
     # Assembling and send the HTML content
@@ -478,7 +525,10 @@ def show_decision_service(decisionServiceName):
             message += '<td><input type="text" name="{}" style="text-align=left"></input></td>'.format(variable)
             if len(glossaryNames) > 1:
                 (FEELname, value, attributes) = glossary[concept][variable]
-                message += '<td style="text-align=left">{}</td>'.format(attributes[0])
+                if len(attributes) == 0:
+                    message += '<td style="text-align=left"></td>'
+                else:
+                    message += '<td style="text-align=left">{}</td>'.format(attributes[0])
             message += '</tr>'
     message += '</table>'
     message += '<h5>then click the "Make a Decision" button</h5>'
@@ -551,7 +601,10 @@ def show_decision_service_part(decisionServiceName, part):
                 message += '<td style="border:2px solid">{}</td>'.format(FEELname)
                 if len(glossaryNames) > 1:
                     for i in range(len(glossaryNames) - 1):
-                        message += '<td style="border:2px solid">{}</td>'.format(attributes[i])
+                        if i < len(attributes):
+                            message += '<td style="border:2px solid">{}</td>'.format(attributes[i])
+                        else:
+                            message += '<td style="border:2px solid"></td>'
                 message += '</tr>'
         message += '</table>'
         message += '<p align="center"><b><a href="{}">{}</a></b></p></body></html>'.format(url_for('show_decision_service', decisionServiceName=decisionServiceName), ('Return to Decision Service ' + decisionServiceName).replace(' ','&nbsp;'))
@@ -602,6 +655,7 @@ def show_decision_service_part(decisionServiceName, part):
         message += openapi
         message += '</pre>'
         message += '<p align="center"><b><a href="{}">{} {}</a></b></p>'.format(url_for('download_decision_service_api', decisionServiceName=decisionServiceName), 'Download the OpenAPI Specification for Decision Service', decisionServiceName)
+        message += '<div align="center">[curl {}{}]</div>'.format(urlparse(request.base_url).hostname, url_for('download_decision_service_api', decisionServiceName=decisionServiceName))
         message += '<p align="center"><b><a href="{}">{}</a></b></p></body></html>'.format(url_for('show_decision_service', decisionServiceName=decisionServiceName), ('Return to Decision Service ' + decisionServiceName).replace(' ','&nbsp;'))
         return message
     else:                       # Show a worksheet
@@ -694,7 +748,8 @@ def decision_service(decisionServiceName):
         if request.content_type == 'application/x-www-form-urlencoded':         # From the web page
             message = '<html><head><title>Decision Central - bad status from Decision Service {}</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'.format(decisionServiceName)
             message += '<h2 align="center">Your Decision Service {} returned a bad status</h2>'.format(decisionServiceName)
-            message += '<pre>{}</pre>'.format(status)
+            for i in range(len(status['errors'])):
+                message += '<pre>{}</pre>'.format(status['errors'][i])
             message += '<p align="center"><b><a href="{}">{}</a></b></p></body></html>'.format(url_for('splash'), 'Return to Decision Central')
             return message
         else:
@@ -706,18 +761,39 @@ def decision_service(decisionServiceName):
 
     if wantsJSON:
         # Return the results dictionary
+        # The structure of the returned data varies depending upon the Hit Policy of the last executed Decision Table
+        # We don't have the Hit Policy, but we can work it out
+        returnData = {}
         if isinstance(newData, list):
             newData = newData[-1]
+        returnData['Result'] = {}
         for variable in newData['Result']:
             value = newData['Result'][variable]
-            newData['Result'][variable] = convertOut(value)
-        (executedDecision, decisionTable,ruleId) = newData['Executed Rule']
-        newData['Executed Rule'] = []
-        newData['Executed Rule'].append(executedDecision)
-        newData['Executed Rule'].append(decisionTable)
-        newData['Executed Rule'].append(ruleId)
-        newData['Status'] = status
-        return jsonify(newData)
+            if isinstance(value, dict):
+                returnData['Result'][variable] = {}
+                for key in value:
+                    returnData['Result'][variable][key] = convertOut(value[j])
+            elif isinstance(value, list):         # The last executed Decision Table was a COLLECTION
+                returnData['Result'][variable] = []
+                for j in range(len(value)):
+                    returnData['Result'][variable].append(convertOut(value[j]))
+            else:
+                returnData['Result'][variable] = convertOut(value)
+        returnData['Executed Rule'] = []
+        if isinstance(newData['Executed Rule'], list):           # The last executed Decision Table was RULE ORDER, OUTPUT ORDER or COLLECTION
+            for i in range(len(newData['Executed Rule'])):
+                returnData['Executed Rule'].append([])
+                (executedDecision, decisionTable,ruleId) = newData['Executed Rule'][i]
+                returnData['Executed Rule'][-1].append(executedDecision)
+                returnData['Executed Rule'][-1].append(decisionTable)
+                returnData['Executed Rule'][-1].append(ruleId)
+        else:
+            (executedDecision, decisionTable,ruleId) = newData['Executed Rule']
+            returnData['Executed Rule'].append(executedDecision)
+            returnData['Executed Rule'].append(decisionTable)
+            returnData['Executed Rule'].append(ruleId)
+        returnData['Status'] = status
+        return jsonify(returnData)
     else:
         # Assembling the HTML content
         message = '<html><head><title>The decision from Decision Service {}</title><link rel="icon" href="data:,"></head><body>'.format(decisionServiceName)
@@ -729,6 +805,8 @@ def decision_service(decisionServiceName):
         if isinstance(newData, list):
             newData = newData[-1]
         for variable in newData['Result']:
+            if newData['Result'][variable] == '':
+                continue
             message += '<tr><td style="border:2px solid">{}</td>'.format(variable)
             message += '<td style="border:2px solid">{}</td></tr>'.format(str(newData['Result'][variable]))
         message += '</table>'
@@ -737,11 +815,19 @@ def decision_service(decisionServiceName):
         message += '<tr><th style="border:2px solid">Executed Decision</th>'
         message += '<th style="border:2px solid">Decision Table</th>'
         message += '<th style="border:2px solid">Rule Id</th></tr>'
-        (executedDecision, decisionTable,ruleId) = newData['Executed Rule']
-        message += '<tr><td style="border:2px solid">{}</td>'.format(executedDecision)
-        message += '<td style="border:2px solid">{}</td>'.format(decisionTable)
-        message += '<td style="border:2px solid">{}</td></tr>'.format(ruleId)
-        message += '<tr>'
+        if isinstance(newData['Executed Rule'], list):           # The last executed Decision Table was RULE ORDER, OUTPUT ORDER or COLLECTION
+            for j in range(len(newData['Executed Rule'])):
+                (executedDecision, decisionTable,ruleId) = newData['Executed Rule'][j]
+                message += '<tr><td style="border:2px solid">{}</td>'.format(executedDecision)
+                message += '<td style="border:2px solid">{}</td>'.format(decisionTable)
+                message += '<td style="border:2px solid">{}</td></tr>'.format(ruleId)
+                message += '<tr>'
+        else:
+            (executedDecision, decisionTable,ruleId) = newData['Executed Rule']
+            message += '<tr><td style="border:2px solid">{}</td>'.format(executedDecision)
+            message += '<td style="border:2px solid">{}</td>'.format(decisionTable)
+            message += '<td style="border:2px solid">{}</td></tr>'.format(ruleId)
+            message += '<tr>'
         message += '</table>'
         message += '<p align="center"><b><a href="/">{}</a></b></p></body></html>'.format('Return to Decision Central')
         return message

@@ -97,6 +97,8 @@ logFile = None               # The name of the logfile (output to stderr if None
 fh = None                    # The logging handler for file things
 sh = None                    # The logging handler for stdin things
 decisionServices = {}        # The dictionary of currently defined Decision services
+Excel_EXTENSIONS = {'xlsx', 'xlsm'}
+ALLOWED_EXTENSIONS = {'xlsx', 'xlsm', 'xml', 'dmn'}
 
 
 
@@ -118,15 +120,27 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
             for i in range(len(thisValue)):
                 thisValue[i] = self.convertIn(thisValue[i])
         elif isinstance(thisValue, str):
+            if thisValue == '':
+                return None
             tokens = self.data.lexer.tokenize(thisValue)
             yaccTokens = []
             for token in tokens:
                 yaccTokens.append(token)
             self.data.logger.info('POST - tokens {}'.format(yaccTokens))
             if len(yaccTokens) != 1:
-                return thisValue
+                if (thisValue[0] != '"') or (thisValue[-1] != '"'):
+                    return '"' + thisValue + '"'
+                else:
+                    return thisValue
             elif yaccTokens[0].type == 'NUMBER':
                     return float(thisValue)
+            elif yaccTokens[0].type == 'BOOLEAN':
+                if thisValue == 'true':
+                    return True
+                elif thisValue == 'false':
+                    return False
+                elif thisValue == 'null':
+                    return None
             elif yaccTokens[0].type == 'NAME':
                 if thisValue == 'true':
                     return True
@@ -228,6 +242,8 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                 return thisTime
             else:
                 return thisValue
+        else:
+            return thisValue
 
 
     def convertOut(self, thisValue):
@@ -316,7 +332,13 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
         for concept in glossary:
             for variable in glossary[concept]:
                 thisAPI.append('            "{}":'.format(variable))
-                thisAPI.append('              type: string')
+                thisAPI.append('              type: object')
+                thisAPI.append('              additionalProperties:')
+                thisAPI.append('                oneOf:')
+                thisAPI.append('                  - type: string')
+                thisAPI.append('                  - type: array')
+                thisAPI.append('                    items:')
+                thisAPI.append('                      type: string')
         thisAPI.append('        "Executed Rule":')
         thisAPI.append('          type: array')
         thisAPI.append('          items:')
@@ -474,6 +496,7 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
             self.message += openapi
             self.message += '</pre>'
             self.message += '<p align="center"><b><a href="{}">{}</a></b></p>'.format('/downloaduploadapi', 'Download the OpenAPI Specification for Decision Central file upload')
+            self.message += '<div align="center">[curl {}{}]</div>'.format(self.headers['host'], '/downloaduploadapi')
             self.message += '<p align="center"><b><a href="/">{}</a></b></p>'.format('Return to Decision Central')
             self.message += '</body></html>'
             self.wfile.write(self.message.encode('utf-8'))
@@ -533,7 +556,10 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                         self.message += '<td><input type="text" name="{}" style="text-align=left"></input></td>'.format(variable)
                         if len(glossaryNames) > 1:
                             (FEELname, variable, attributes) = glossary[concept][variable]
-                            self.message += '<td style="text-align=left">{}</td>'.format(attributes[0])
+                            if len(attributes) == 0:
+                                self.message += '<td style="text-align=left"></td>'
+                            else:
+                                self.message += '<td style="text-align=left">{}</td>'.format(attributes[0])
                         self.message += '</tr>'
                 self.message += '</table>'
                 self.message += '<h5>then click the "Make a Decision" button</h5>'
@@ -613,7 +639,10 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                             self.message += '<td style="border:2px solid">{}</td>'.format(FEELname)
                             if len(glossaryNames) > 1:
                                 for i in range(len(glossaryNames) - 1):
-                                    self.message += '<td style="border:2px solid">{}</td>'.format(attributes[i])
+                                    if i < len(attributes):
+                                        self.message += '<td style="border:2px solid">{}</td>'.format(attributes[i])
+                                    else:
+                                        self.message += '<td style="border:2px solid"></td>'
                             self.message += '</tr>'
                     self.message += '</table>'
                     self.message += '</body></html>'
@@ -679,6 +708,7 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                     self.message += openapi
                     self.message += '</pre>'
                     self.message += '<p align="center"><b><a href="/download/{}">{} {}</a></b></p>'.format(name, 'Download the OpenAPI Specification for Decision Service', name)
+                    self.message += '<div align="center">[curl {}{}{}]</div>'.format(self.headers['host'], '/download/', quote(name))
                     self.message += '<p align="center"><b><a href="/show/{}">{} {}</a></b></p>'.format(name, 'Return to Decision Service', name)
                     self.message += '</body></html>'
                     self.wfile.write(self.message.encode('utf-8'))
@@ -843,8 +873,20 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                         if nextQuote != -1:
                             filename = filename[:nextQuote]
             if filename is None:
-                # Return Bad Request
+                # Return the error
                 self.data.logger.warning('POST missing filename')
+                self.send_response(200)
+                self.send_header('Content-type', 'text/html')
+                self.end_headers()
+
+                # Assembling and send the HTML content
+                self.message = '<html><head><title>Decision Central - No filename {}</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'.format(name)
+                self.message += '<h2 align="center">No filename found in  the upload request</h2>'.format(name)
+                for i in range(len(status['errors'])):
+                    self.message += '<pre>{}</pre>'.format(status['errors'][i])
+                self.message += '<p align="center"><b><a href="/">{}</a></b></p>'.format('Return to Decision Central')
+                self.message += '</body></html>'
+                self.wfile.write(self.message.encode('utf-8'))
                 # Shutdown logging
                 for hdlr in self.data.logger.handlers:
                     hdlr.flush()
@@ -852,11 +894,34 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                 self.data.logStream.close()
                 self.data.websh.close()
                 self.data.logger.removeHandler(self.data.websh)
-                self.send_error(400)
                 del self.data
                 return
             filename = os.path.basename(filename)
-            (filename, ext) = os.path.splitext(filename)
+            (filename, extn) = os.path.splitext(filename)
+            if extn[1:].lower() not in ALLOWED_EXTENSIONS:
+                # Return the error
+                self.data.logger.warning('POST bad file extension:%s', ext)
+                self.send_response(200)
+                self.send_header('Content-type', 'text/html')
+                self.end_headers()
+
+                # Assembling and send the HTML content
+                self.message = '<html><head><title>Decision Central - Invalid filename extension {}</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'.format(name)
+                self.message += '<h2 align="center">Invalid file extension in the upload request</h2>'.format(name)
+                for i in range(len(status['errors'])):
+                    self.message += '<pre>{}</pre>'.format(status['errors'][i])
+                self.message += '<p align="center"><b><a href="/">{}</a></b></p>'.format('Return to Decision Central')
+                self.message += '</body></html>'
+                self.wfile.write(self.message.encode('utf-8'))
+                # Shutdown logging
+                for hdlr in self.data.logger.handlers:
+                    hdlr.flush()
+                self.data.websh.flush()
+                self.data.logStream.close()
+                self.data.websh.close()
+                self.data.logger.removeHandler(self.data.websh)
+                del self.data
+                return
             self.data.logger.info('POST - filename {}'.format(filename))
             line = self.rfile.readline()            # Should be Content-Type - skip
             remainingbytes -= len(line)
@@ -865,7 +930,7 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
             remainingbytes -= len(line)
             self.data.logger.info('POST - line3 {}'.format(line))
 
-            # Now read in the DMN compliant Excel workbook
+            # Now read in the DMN compliant file
             line = self.rfile.readline()
             remainingbytes -= len(line)
             if line.strip() != '':                  # curl can send an extra blank line
@@ -873,42 +938,60 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
             else:
                 preline = self.rfile.readline()     # The next line (or end of file) will tell us what this is
                 remainingbytes -= len(preline)
-            workbook = io.BytesIO()                 # Somewhere to store the DMN compliant Excel workbook
+            DMNfile = io.BytesIO()                 # Somewhere to store the DMN compliant file
             while remainingbytes > 0:               # Keep reading until the end
-                line = self.rfile.readline()        # This line wil define what we need to do with the previous line
+                line = self.rfile.readline()        # This line will define what we need to do with the previous line
                 remainingbytes -= len(line)
                 if boundary in str(line):           # This line is a boundary - trim and save the previous line
                     preline = preline[0:-1]
                     if preline.endswith(b'\r'):
                         preline = preline[0:-1]
-                    workbook.write(preline)
+                    DMNfile.write(preline)
                     break
                 else:                               # Save the previous line (it does not need trimming)
-                    workbook.write(preline)
+                    DMNfile.write(preline)
                     preline = line
 
-            # Create a Decision Service from the uploaded file
-            try:                # Convert file to workbook
-                wb = load_workbook(filename=workbook)
-            except Exception as e:
-                # Return Bad Request
-                self.data.logger.warning('POST bad workbook')
-                self.send_error(400)
-                # Shutdown logging
-                for hdlr in self.data.logger.handlers:
-                    hdlr.flush()
-                self.data.websh.flush()
-                self.data.logStream.close()
-                self.data.websh.close()
-                self.data.logger.removeHandler(self.data.websh)
-                del self.data
-                return
-
             dmnRules = pyDMNrules.DMN()             # An empty Rules Engine
-            status = dmnRules.use(wb)               # Add the rules from this DMN compliant Excel workbook
+            if extn[1:].lower() in Excel_EXTENSIONS:
+                # Create a Decision Service from the uploaded file
+                try:                # Convert file to workbook
+                    wb = load_workbook(filename=DMNfile)
+                except Exception as e:
+                    # Return Bad Request
+                    self.data.logger.warning('POST bad workbook')
+                    self.send_error(400)
+                    # Shutdown logging
+                    for hdlr in self.data.logger.handlers:
+                        hdlr.flush()
+                    self.data.websh.flush()
+                    self.data.logStream.close()
+                    self.data.websh.close()
+                    self.data.logger.removeHandler(self.data.websh)
+                    del self.data
+                    return
+
+                status = dmnRules.use(wb)               # Add the rules from this DMN compliant Excel workbook
+            else:
+                DMNfile.seek(0)
+                xml = DMNfile.read()
+                status = dmnRules.useXML(xml)
+
             if 'errors' in status:
-                # Return Bad Request
-                self.data.logger.warning('POST bad DMN rules')
+                # Return the error
+                self.send_response(200)
+                self.send_header('Content-type', 'text/html')
+                self.end_headers()
+
+                # Assembling and send the HTML content
+                self.message = '<html><head><title>Decision Central - Invalid DMN</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'
+                self.message += '<h2 align="center">There were errors in your DMN rules</h2>'
+                for i in range(len(status['errors'])):
+                    self.message += '<pre>{}</pre>'.format(status['errors'][i])
+                self.message += '<pre>{}</pre>'.format(xml)
+                self.message += '<p align="center"><b><a href="/">{}</a></b></p>'.format('Return to Decision Central')
+                self.message += '</body></html>'
+                self.wfile.write(self.message.encode('utf-8'))
                 # Shutdown logging
                 for hdlr in self.data.logger.handlers:
                     hdlr.flush()
@@ -916,7 +999,6 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                 self.data.logStream.close()
                 self.data.websh.close()
                 self.data.logger.removeHandler(self.data.websh)
-                self.send_error(400)
                 del self.data
                 return
 
@@ -1016,7 +1098,8 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                     # Assembling and send the HTML content
                     self.message = '<html><head><title>Decision Central - bad status from Decision Service {}</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'.format(name)
                     self.message += '<h2 align="center">Your Decision Service {} returned a bad status</h2>'.format(name)
-                    self.message += '<pre>{}</pre>'.format(status)
+                    for i in range(len(status['errors'])):
+                        self.message += '<pre>{}</pre>'.format(status['errors'][i])
                     self.message += '<p align="center"><b><a href="/">{}</a></b></p>'.format('Return to Decision Central')
                     self.message += '</body></html>'
                     self.wfile.write(self.message.encode('utf-8'))
@@ -1033,7 +1116,9 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
 
             # Check if JSON or HTML response required
             if accept_type == 'application/json':
-                # Return the results
+                # Return the results dictionary
+                # The structure of the returned data varies depending upon the Hit Policy of the last executed Decision Table
+                # We don't have the Hit Policy, but we can work it out
                 self.send_response(200)
                 self.send_header('Content-type', 'application/json')
                 self.end_headers()
@@ -1045,12 +1130,28 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                     newData = self.data.newData
                 for thisVariable in newData['Result']:
                     thisValue = newData['Result'][thisVariable]
-                    newData['Result'][thisVariable] = self.convertOut(thisValue)
-                (executedDecision, decisionTable,ruleId) = self.data.newData['Executed Rule']
-                newData['Executed Rule'] = []
-                newData['Executed Rule'].append(executedDecision)
-                newData['Executed Rule'].append(decisionTable)
-                newData['Executed Rule'].append(ruleId)
+                    if isinstance(thisValue, dict):
+                        returnData['Result'][variable] = {}
+                        for key in thisValue:
+                            returnData['Result'][variable][key] = convertOut(thisValue[j])
+                    elif isinstance(thisValue, list):         # The last executed Decision Table was a COLLECTION
+                        returnData['Result'][variable] = []
+                        for j in range(len(thisValue)):
+                            returnData['Result'][variable].append(convertOut(thisValue[j]))
+                    else:
+                        returnData['Result'][variable] = convertOut(thisValue)
+                if isinstance(newData['Executed Rule'], list):           # The last executed Decision Table was RULE ORDER, OUTPUT ORDER or COLLECTION
+                    for i in range(len(newData['Executed Rule'])):
+                        returnData['Executed Rule'].append([])
+                        (executedDecision, decisionTable,ruleId) = newData['Executed Rule'][i]
+                        returnData['Executed Rule'][-1].append(executedDecision)
+                        returnData['Executed Rule'][-1].append(decisionTable)
+                        returnData['Executed Rule'][-1].append(ruleId)
+                else:
+                    (executedDecision, decisionTable,ruleId) = newData['Executed Rule']
+                    returnData['Executed Rule'].append(executedDecision)
+                    returnData['Executed Rule'].append(decisionTable)
+                    returnData['Executed Rule'].append(ruleId)
                 newData['Status'] = status
                 self.data.response = json.dumps(newData)
                 self.data.response = self.data.response.encode('utf-8')
@@ -1073,6 +1174,8 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                 else:
                     newData = self.data.newData
                 for variable in newData['Result']:
+                    if newData['Result'][variable] == '':
+                        continue
                     self.message += '<tr><td style="border:2px solid">{}</td>'.format(variable)
                     self.message += '<td style="border:2px solid">{}</td></tr>'.format(str(newData['Result'][variable]))
                 self.message += '</table>'
@@ -1081,11 +1184,19 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                 self.message += '<tr><th style="border:2px solid">Executed Decision</th>'
                 self.message += '<th style="border:2px solid">Decision Table</th>'
                 self.message += '<th style="border:2px solid">Rule Id</th></tr>'
-                (executedDecision, decisionTable,ruleId) = newData['Executed Rule']
-                self.message += '<tr><td style="border:2px solid">{}</td>'.format(executedDecision)
-                self.message += '<td style="border:2px solid">{}</td>'.format(decisionTable)
-                self.message += '<td style="border:2px solid">{}</td></tr>'.format(ruleId)
-                self.message += '<tr>'
+                if isinstance(newData['Executed Rule'], list):           # The last executed Decision Table was RULE ORDER, OUTPUT ORDER or COLLECTION
+                    for j in range(len(newData['Executed Rule'])):
+                        (executedDecision, decisionTable,ruleId) = newData['Executed Rule'][j]
+                        message += '<tr><td style="border:2px solid">{}</td>'.format(executedDecision)
+                        message += '<td style="border:2px solid">{}</td>'.format(decisionTable)
+                        message += '<td style="border:2px solid">{}</td></tr>'.format(ruleId)
+                        message += '<tr>'
+                else:
+                    (executedDecision, decisionTable,ruleId) = newData['Executed Rule']
+                    message += '<tr><td style="border:2px solid">{}</td>'.format(executedDecision)
+                    message += '<td style="border:2px solid">{}</td>'.format(decisionTable)
+                    message += '<td style="border:2px solid">{}</td></tr>'.format(ruleId)
+                    message += '<tr>'
                 self.message += '</table>'
                 self.message += '<p align="center"><b><a href="/">{}</a></b></p>'.format('Return to Decision Central')
                 self.message += '</body></html>'
