@@ -1,3 +1,5 @@
+### 0.1.0 - Added user forms and APIs for testing individual Decision Tables
+ - Added APIs for uploading DMN compliant Excel workbooks and DMN comformant XML files
 ### 0.0.8 - added support for uploading XML DMN files
  - Extended acceptable file extensions to .xls, .xlsm, .xml and .dmn
  ### 0.0.7 - added missing </body> and </html> tags

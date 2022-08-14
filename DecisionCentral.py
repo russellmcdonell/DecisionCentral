@@ -23,8 +23,8 @@ The name of a logging file where you want all messages captured.
 The port used for listening for http requests
 
 
-This script lets users upload Excel workbooks, which must comply to the DMN standard.
-Once an Excel workbook has been uploaded and parsed successfully as a DMN complient workbook, this script will
+This script lets users upload Excel workbooks or XML files, which must comply to the DMN standard.
+Once an Excel workbook or XML file has been uploaded and parsed successfully as DMN cmopliant, this script will
 1. Create a dedicated web page so that the user can interactively run/check their decision service
 2. Create an API so that the user can use, programatically, their decision service
 3. Create an OpenAPI yaml file documenting the created API
@@ -44,6 +44,7 @@ import datetime
 import dateutil.parser, dateutil.tz
 import pyDMNrules
 import threading
+from werkzeug.utils import secure_filename
 from urllib.parse import urlparse, urlencode, parse_qs, quote, unquote
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from http.client import parse_headers
@@ -272,11 +273,14 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
             return thisValue
 
 
-    def mkOpenAPI(self, glossary, name):
+    def mkOpenAPI(self, glossary, name, sheet):
         thisAPI = []
         thisAPI.append('openapi: 3.0.0')
         thisAPI.append('info:')
-        thisAPI.append('  title: Decision Service {}'.format(name))
+        if sheet is None:
+            thisAPI.append('  title: Decision Service {}'.format(name))
+        else:
+            thisAPI.append('  title: Decision Service {} - Decision Table {}'.format(name, sheet))
         thisAPI.append('  version: 1.0.0')
         if ('X-Forwarded-Host' in self.headers) and ('X-Forwarded-Proto' in self.headers):
             thisAPI.append('servers:')
@@ -296,7 +300,10 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
             thisAPI.append('    "url":"{}"'.format(origin))
             thisAPI.append('  ]')
         thisAPI.append('paths:')
-        thisAPI.append('  /api/{}:'.format(quote(name)))
+        if sheet is None:
+            thisAPI.append('  /api/{}:'.format(quote(name)))
+        else:
+            thisAPI.append('  /api/{}_table/{}:'.format(quote(name), quote(sheet)))
         thisAPI.append('    post:')
         thisAPI.append('      summary: Use the {} Decision Service to make a decision based upon the passed data'.format(name))
         thisAPI.append('      operationId: decide')
@@ -342,7 +349,12 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
         thisAPI.append('        "Executed Rule":')
         thisAPI.append('          type: array')
         thisAPI.append('          items:')
-        thisAPI.append('            type: string')
+        thisAPI.append('            additionalProperties:')
+        thisAPI.append('              oneOf:')
+        thisAPI.append('                - type: string')
+        thisAPI.append('                - type: array')
+        thisAPI.append('                  items:')
+        thisAPI.append('                    type: string')
         thisAPI.append('        "Status":')
         thisAPI.append('          type: object')
         thisAPI.append('          properties:')
@@ -413,6 +425,46 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
         return '\n'.join(thisAPI)
 
 
+    def mkDeleteOpenAPI(self, name):
+        thisAPI = []
+        thisAPI.append('openapi: 3.0.0')
+        thisAPI.append('info:')
+        thisAPI.append('  title: Delete Decision Service API')
+        thisAPI.append('  version: 1.0.0')
+        if ('X-Forwarded-Host' in self.headers) and ('X-Forwarded-Proto' in self.headers):
+            thisAPI.append('servers:')
+            thisAPI.append('  [')
+            thisAPI.append('    "url":"{}://{}"'.format(self.headers['X-Forwarded-Proto'], self.headers['X-Forwarded-Host']))
+            thisAPI.append('  ]')
+        elif 'Host' in self.headers:
+            thisAPI.append('servers:')
+            thisAPI.append('  [')
+            thisAPI.append('    "url":"{}"'.format(self.headers['Host']))
+            thisAPI.append('  ]')
+        elif 'Forwarded' in self.headers:
+            forwards = self.headers['Forwarded'].split(';')
+            origin = forwards[0].split('=')[1]
+            thisAPI.append('servers:')
+            thisAPI.append('  [')
+            thisAPI.append('    "url":"{}"'.format(origin))
+            thisAPI.append('  ]')
+        thisAPI.append('paths:')
+        thisAPI.append('  /delete/{}:'.format(quote(name)))
+        thisAPI.append('    get:')
+        thisAPI.append('      summary: Delete a DecisionCentral Decision Service')
+        thisAPI.append('      operationId: delete')
+        thisAPI.append('      responses:')
+        thisAPI.append('        200:')
+        thisAPI.append('          description: Item deleted')
+        thisAPI.append('          content:')
+        thisAPI.append('            text/html:')
+        thisAPI.append('              schema:')
+        thisAPI.append('                type: string')
+        thisAPI.append('        400:')
+        thisAPI.append('          description: Invalid request')
+        return '\n'.join(thisAPI)
+
+
     def do_GET(self):
 
         global decisionServices
@@ -439,13 +491,13 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
             # Assembling and send the HTML content
             self.data.logger.info('GET {}'.format(self.path))
             self.message = '<html><head><title>Decision Central</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'
-            self.message += '<h1 align="center">Welcolme to Decision Central</h1>'
-            self.message += '<h3 align="center">Your home for all your DMN Decision Services</h3>'
-            self.message += '<div align="center"><b>Here you can create a Decision Service by simply'
-            self.message += '<br/>uploading a DMN compatible Excel workbook</b></div>'
-            self.message += '<br/><table width="80%" align="center" style="font-size:120%">'
+            self.message += '<h1 style="text-align:center">Welcolme to Decision Central</h1>'
+            self.message += '<h3 style="text-align:center">Your home for all your DMN Decision Services</h3>'
+            self.message += '<div style="text-align:center;margin:auto"><b>Here you can create a Decision Service by simply'
+            self.message += '<br/>uploading a DMN compatible Excel workbook or DMN compliant XML file</b></div>'
+            self.message += '<br/><table width="90%" style="text-align:left;margin:auto;font-size:120%">'
             self.message += '<tr>'
-            self.message += '<th>With each created Decision Service you get</th>'
+            self.message += '<th style="padding-left:3ch">With each created Decision Service you get</th>'
             self.message += '<th>Available Decision Services</th>'
             self.message += '</tr>'
             self.message += '<tr><td>'
@@ -462,20 +514,20 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
             self.message += '</td>'
             self.message += '</tr>'
             self.message += '<tr>'
-            self.message += '<td><p>Upload your DMN compatible Excel workook here</p>'
+            self.message += '<td><p>Upload your DMN compatible Excel workook or DMN compliant XML file here</p>'
             self.message += '<form id="form" action ="{}" method="post" enctype="multipart/form-data">'.format(self.path + 'upload')
             self.message += '<input id="file" type="file" name="file">'
-            self.message += '<input id="submit" type="submit" value="Upload your workbook"></p>'
+            self.message += '<input id="submit" type="submit" value="Upload your workbook or XML file"></p>'
             self.message += '</form>'
             self.message += '</tr>'
             self.message += '<td></td>'
             self.message += '</table>'
-            self.message += '<p align="center"><b><a href="{}">{}</a></b></p>'.format(self.path + 'uploadapi', 'OpenAPI specification for Decision Central file upload')
+            self.message += '<p style="text-align:center"><b><a href="{}">{}</a></b></p>'.format(self.path + 'uploadapi', 'OpenAPI Specification for Decision Central file upload')
             self.message += '<p><b><u>WARNING:</u></b>This is not a production service. '
-            self.message += 'This server can be rebooted at any time. When that happens everything is lost. You will need to re-upload you DMN compliant Excel workbooks in order to restore services. '
-            self.message += 'There is no security/login requirements on this service. Anyone can upload their rules, using a Excel workbook with the same name as yours, thus replacing/corrupting your rules. '
+            self.message += 'This server can be rebooted at any time. When that happens everything is lost. You will need to re-upload you DMN compliant Excel workbooks and DMN conformant XML files in order to restore services. '
+            self.message += 'There is no security/login requirements on this service. Anyone can upload their rules, using a Excel workbook or XML file with the same name as yours, thus replacing/corrupting your rules. '
             self.message += 'It is recommended that you obtain a copy of the source code from <a href="https://github.com/russellmcdonell/DecisionCentral">GitHub</a> and run it on your own server/laptop with appropriate security.'
-            self.message += 'However, this in not production ready software. It is built, using <a href="https://pypi.org/project/pyDMNrules/">pyDMNrules</a>. '
+            self.message += 'This in not production ready software. It is built, using <a href="https://pypi.org/project/pyDMNrules/">pyDMNrules</a>. '
             self.message += 'You can build production ready solutions using <b>pyDMNrules</b>, but this is not one of those solutions.</p>'
             self.message += '</body></html>'
             self.wfile.write(self.message.encode('utf-8'))
@@ -490,14 +542,23 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
             # Assembling and send the HTML content
             self.data.logger.info('GET {}'.format(self.path))
             self.message = '<html><head><title>Decision Central</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'
-            self.message += '<h2 align="center">Open API Specification for Decision Service file upload</h2>'
+            self.message += '<h2 style="text-align:center">Open API Specification for Decision Service file upload</h2>'
             self.message += '<pre>'
             openapi = self.mkUploadOpenAPI()
             self.message += openapi
             self.message += '</pre>'
-            self.message += '<p align="center"><b><a href="{}">{}</a></b></p>'.format('/downloaduploadapi', 'Download the OpenAPI Specification for Decision Central file upload')
-            self.message += '<div align="center">[curl {}{}]</div>'.format(self.headers['host'], '/downloaduploadapi')
-            self.message += '<p align="center"><b><a href="/">{}</a></b></p>'.format('Return to Decision Central')
+            self.message += '<p style="text-align:center"><b><a href="{}">{}</a></b></p>'.format('/downloaduploadapi', 'Download the OpenAPI Specification for Decision Central file upload')
+            self.message += '<div style="text-align:center;margin:auto">[curl '
+            if ('X-Forwarded-Host' in self.headers) and ('X-Forwarded-Proto' in self.headers):
+                self.message += '{}://{}'.format(self.headers['X-Forwarded-Proto'], self.headers['X-Forwarded-Host'])
+            elif 'Host' in self.headers:
+                self.message += '{}'.format(self.headers['Host'])
+            elif 'Forwarded' in self.headers:
+                forwards = self.headers['Forwarded'].split(';')
+                origin = forwards[0].split('=')[1]
+                self.message += '{}'.format(origin)
+            self.message += '/downloaduploadapi]'
+            self.message += '<p style="text-align:center"><b><a href="/">{}</a></b></p>'.format('Return to Decision Central')
             self.message += '</body></html>'
             self.wfile.write(self.message.encode('utf-8'))
         elif request.path == '/downloaduploadapi':         # Download the file upload OpenAPI Specification
@@ -532,8 +593,8 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
 
                 # Assembling and send the HTML content
                 self.message = '<html><head><title>Decision Service {}</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'.format(name)
-                self.message += '<h2 align="center">Your Decision Service {}</h2>'.format(name)
-                self.message += '<table align="center" style="font-size:120%">'
+                self.message += '<h2 style="text-align:center">Your Decision Service {}</h2>'.format(name)
+                self.message += '<table style="text-align:left;margin:auto;font-size:120%">'
                 self.message += '<tr>'
                 self.message += '<th>Test Decision Service {}</th>'.format(name)
                 self.message += '<th>The Decision Services {} parts</th>'.format(name)
@@ -541,7 +602,7 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
 
                 # Create the user input form
                 self.message += '<td>'
-                self.message += '<form id="form" action ="{}" method="post">'.format('/api/' + name)
+                self.message += '<form id="form" action ="{}" method="post">'.format('/api/' + quote(name))
                 self.message += '<h5>Enter values for these Variables</h5>'
                 self.message += '<table>'
                 for concept in glossary:
@@ -568,7 +629,7 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                 self.message += '</td>'
 
                 # And links for the Decision Service parts
-                self.message += '<td style="vertical-align=top">'
+                self.message += '<td style="vertical-align:top">'
                 self.message += '<br/>'
                 self.message += '<a href="{}">{}</a>'.format(self.path + '/glossary', 'Glossary')
                 self.message += '<br/>'
@@ -584,10 +645,12 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                 self.message += '<br/>'
                 self.message += '<br/>'
                 self.message += '<br/>'
-                self.message += '<a href="/delete/{}">Delete the {} Decision Service</a>'.format(name, name.replace(' ', '&nbsp;'))
+                self.message += '<a href="/delete/{}">Delete the {} Decision Service</a>'.format(quote(name), name.replace(' ', '&nbsp;'))
+                self.message += '<br/>'
+                self.message += '<a href="/show_delete/{}">API for deleting the {} Decision Service</a>'.format(quote(name), name.replace(' ', '&nbsp;'))
                 self.message += '</td>'
                 self.message += '</tr></table>'
-                self.message += '<p align="center"><b><a href="/">{}</a></b></p>'.format('Return to Decision Central')
+                self.message += '<p style="text-align:center"><b><a href="/">{}</a></b></p>'.format('Return to Decision Central')
                 self.message += '</body></html>'
                 self.wfile.write(self.message.encode('utf-8'))
                 return
@@ -601,7 +664,7 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                 name = bits[0]
                 if name not in decisionServices:                # Check that we have this Decision Service
                     # Return Bad Request
-                    self.data.logger.warning('GET: {} not in decisionServides'.format(name))
+                    self.data.logger.warning('GET: {} not in decisionServices'.format(name))
                     self.send_error(400)
                     return
                 part = bits[1]                      # The part to show
@@ -617,7 +680,7 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
 
                     # Assembling and send the HTML content
                     self.message = '<html><head><title>Decision Service {} Glossary</title><link ref="icon" href="data:,"></head><body style="font-size:120%">'.format(name)
-                    self.message += '<h2 align="center">The Glossary for the {} Decision Service</h2>'.format(name)
+                    self.message += '<h2 style="text-align:center">The Glossary for the {} Decision Service</h2>'.format(name)
                     self.message += '<div style="width:25%;background-color:black;color:white">{}</div>'.format('Glossary - ' + glossaryNames[0])
                     self.message += '<table style="border-collapse:collapse;border:2px solid"><tr>'
                     self.message += '<th style="border:2px solid;background-color:LightSteelBlue">Variable</th><th style="border:2px solid;background-color:LightSteelBlue">Business Concept</th><th style="border:2px solid;background-color:LightSteelBlue">Attribute</th>'
@@ -646,7 +709,7 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                             self.message += '</tr>'
                     self.message += '</table>'
                     self.message += '</body></html>'
-                    self.message += '<p align="center"><b><a href="/show/{}">{} {}</a></b></p>'.format(name, 'Return to Decision Service', name)
+                    self.message += '<p style="text-align:center"><b><a href="/show/{}">{} {}</a></b></p>'.format(name, 'Return to Decision Service', name)
                     self.message += '</body></html>'
                     self.wfile.write(self.message.encode('utf-8'))
                     return
@@ -662,7 +725,7 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
 
                     # Assembling and send the HTML content
                     self.message = '<html><head><title>Decision Service {} Decision Table</title><link ref="icon" href="data:,"></head><body style="font-size:120%">'.format(name)
-                    self.message += '<h2 align="center">The Decision Table for the {} Decision Service</h2>'.format(name)
+                    self.message += '<h2 style="text-align:center">The Decision Table for the {} Decision Service</h2>'.format(name)
                     self.message += '<div style="width:25%;background-color:black;color:white">{}</div>'.format('Decision - ' + decisionName)
                     self.message += '<table style="border-collapse:collapse;border:2px solid">'
                     inInputs = True
@@ -684,12 +747,12 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                                     inDecide = False
                             else:
                                 if decision[i][j] == '-':
-                                    self.message += '<td align="center" style="border:2px solid">{}</td>'.format(decision[i][j])
+                                    self.message += '<td style="text-align:center" style="border:2px solid">{}</td>'.format(decision[i][j])
                                 else:
                                     self.message += '<td style="border:2px solid">{}</td>'.format(decision[i][j])
                         self.message += '</tr>'
                     self.message += '</table>'
-                    self.message += '<p align="center"><b><a href="/show/{}">{} {}</a></b></p>'.format(name, 'Return to Decision Service', name)
+                    self.message += '<p style="text-align:center"><b><a href="/show/{}">{} {}</a></b></p>'.format(name, 'Return to Decision Service', name)
                     self.message += '</body></html>'
                     self.wfile.write(self.message.encode('utf-8'))
                     return
@@ -702,14 +765,23 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
 
                     # Assembling and send the HTML content
                     self.message = '<html><head><title>Decision Service {} Open API Specification</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'.format(name)
-                    self.message += '<h2 align="center">Open API Specification for the {} Decision Service</h2>'.format(name)
+                    self.message += '<h2 style="text-align:center">Open API Specification for the {} Decision Service</h2>'.format(name)
                     self.message += '<pre>'
-                    openapi = self.mkOpenAPI(glossary, name)
+                    openapi = self.mkOpenAPI(glossary, name, None)
                     self.message += openapi
                     self.message += '</pre>'
-                    self.message += '<p align="center"><b><a href="/download/{}">{} {}</a></b></p>'.format(name, 'Download the OpenAPI Specification for Decision Service', name)
-                    self.message += '<div align="center">[curl {}{}{}]</div>'.format(self.headers['host'], '/download/', quote(name))
-                    self.message += '<p align="center"><b><a href="/show/{}">{} {}</a></b></p>'.format(name, 'Return to Decision Service', name)
+                    self.message += '<p style="text-align:center"><b><a href="/download/{}">{} {}</a></b></p>'.format(name, 'Download the OpenAPI Specification for Decision Service', name)
+                    self.message += '<div style="text-align:center;margin:auto">[curl '
+                    if ('X-Forwarded-Host' in self.headers) and ('X-Forwarded-Proto' in self.headers):
+                        self.message += '{}://{}'.format(self.headers['X-Forwarded-Proto'], self.headers['X-Forwarded-Host'])
+                    elif 'Host' in self.headers:
+                        self.message += '{}'.format(self.headers['Host'])
+                    elif 'Forwarded' in self.headers:
+                        forwards = self.headers['Forwarded'].split(';')
+                        origin = forwards[0].split('=')[1]
+                        self.message += '{}'.format(origin)
+                    self.message += '/download/{}]</div>'.format(quote(name))
+                    self.message += '<p style="text-align:center"><b><a href="/show/{}">{} {}</a></b></p>'.format(name, 'Return to Decision Service', name)
                     self.message += '</body></html>'
                     self.wfile.write(self.message.encode('utf-8'))
                     return
@@ -726,35 +798,179 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
 
                     # Assembling and send the HTML content
                     self.message = '<html><head><title>Decision Service {} sheet "{}"</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'.format(name, part)
-                    self.message += '<h2 align="center">The Decision sheet "{}" for Decision Service {}</h2>'.format(part, name)
+                    self.message += '<h2 style="text-align:center">The Decision sheet "{}" for Decision Service {}</h2>'.format(part, name)
                     self.message += sheets[part]
-                    self.message += '<p align="center"><b><a href="/show/{}">{} {}</a></b></p>'.format(name, 'Return to Decision Service', name)
+                    self.message += '<br/>'
+
+                    # Create the user input form
+                    self.message += '<form id="form" action ="/api/{}_table/{}" method="post">'.format(quote(name) , quote(part))
+                    self.message += '<h5>Enter values for these Variables</h5>'
+                    self.message += '<table>'
+                    glossaryNames = dmnRules.getGlossaryNames()
+                    glossary = dmnRules.getTableGlossary(part)
+                    for concept in glossary:
+                        firstLine = True
+                        for variable in glossary[concept]:
+                            self.message += '<tr>'
+                            if firstLine:
+                                self.message += '<td>{}</td><td style="text-align=right">{}</td>'.format(concept, variable)
+                                firstLine = False
+                            else:
+                                self.message += '<td></td><td style="text-align=right">{}</td>'.format(variable)
+                            self.message += '<td><input type="text" name="{}" style="text-align=left"></input></td>'.format(variable)
+                            if len(glossaryNames) > 1:
+                                (FEELname, variable, attributes) = glossary[concept][variable]
+                                if len(attributes) == 0:
+                                    self.message += '<td style="text-align=left"></td>'
+                                else:
+                                    self.message += '<td style="text-align=left">{}</td>'.format(attributes[0])
+                            self.message += '</tr>'
+                    self.message += '</table>'
+                    self.message += '<h5>then click the "Make a Decision" button</h5>'
+                    self.message += '<input type="submit" value="Make a Decision"/></p>'
+                    self.message += '</form>'
+
+                    self.message += '<p style="text-align:center"><b><a href="{}">{}</a></b></p>'.format('/show_api/' + quote(name) + '/' + quote(part), 'OpenAPI specification'.replace(' ', '&nbsp;'))
+                    self.message += '<p style="text-align:center"><b><a href="/show/{}">{} {}</a></b></p>'.format(name, 'Return to Decision Service', name)
                     self.message += '</body></html>'
                     self.wfile.write(self.message.encode('utf-8'))
                     return
-        elif request.path[0:10] == '/download/':         # Download the Open API specification
+        elif request.path[0:10] == '/show_api/':         # Show Decision Service Decision Table API
             self.data.logger.info('GET {}'.format(self.path))
-            name = unquote(request.path[10:])
+            parts = unquote(request.path[10:])
+            bits = parts.split('/')
+            if len(bits) != 2:
+                # Return Bad Request
+                self.data.logger.warning('GET: {} is not a valid decisionService/decisionTable'.format(parts))
+                self.send_error(400)
+                return
+            name = bits[0]
+            part = bits[1]
+            if name not in decisionServices:                # Check that we have this Decision Service
+                # Return Bad Request
+                self.data.logger.warning('GET: {} not in decisionServices'.format(name))
+                self.send_error(400)
+                return
+
+            dmnRules = decisionServices[name]
+            sheets = dmnRules.getSheets()
+            if part not in sheets:
+                self.data.logger.warning('GET: {} not in sheets'.format(part))
+                self.send_error(400)
+                return
+            glossary = dmnRules.getTableGlossary(part)
+
+            # Output the web page
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html')
+            self.end_headers()
+
+            # Assembling and send the HTML content
+            self.message = '<html><head><title>Decision Service {} Open API Specification for {} Decision Table</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'.format(name, part)
+            self.message += '<h2 style="text-align:center">Open API Specification for the Decision Table {} in the Decision Service {}</h2>'.format(part, name)
+            self.message += '<pre>'
+            openapi = self.mkOpenAPI(glossary, name, part)
+            self.message += openapi
+            self.message += '</pre>'
+            self.message += '<p style="text-align:center"><b><a href="/download/{}/{}">Download the OpenAPI Specification for Decision Table {} in Decision Service {}</a></b></p>'.format(quote(name), quote(part), part, name)
+            self.message += '<div style="text-align:center;margin:auto">[curl '
+            if ('X-Forwarded-Host' in self.headers) and ('X-Forwarded-Proto' in self.headers):
+                self.message += '{}://{}'.format(self.headers['X-Forwarded-Proto'], self.headers['X-Forwarded-Host'])
+            elif 'Host' in self.headers:
+                self.message += '{}'.format(self.headers['Host'])
+            elif 'Forwarded' in self.headers:
+                forwards = self.headers['Forwarded'].split(';')
+                origin = forwards[0].split('=')[1]
+                self.message += '{}'.format(origin)
+            self.message += '/download/{}/{}]</div>'.format(quote(name), quote(part))
+            self.message += '<p style="text-align:center"><b><a href="/show/{}">{} {}</a></b></p>'.format(name, 'Return to Decision Service', name)
+            self.message += '</body></html>'
+            self.wfile.write(self.message.encode('utf-8'))
+            return
+            
+        elif request.path[0:13] == '/show_delete/':         # Show Delete Decision Service API
+            self.data.logger.info('GET {}'.format(self.path))
+            name = unquote(request.path[13:])
             self.data.logger.info('GET - name {}'.format(name))
             if name not in decisionServices:                # Check that we have this Decision Service
                 # Return Bad Request
                 self.data.logger.warning('GET: {} not in decisionServices'.format(name))
                 self.send_error(400)
                 return
+
+            # Output the web page
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html')
+            self.end_headers()
+
+            # Assembling and send the HTML content
+            self.message = '<html><head><title>Delete Decision Service {} Open API Specification</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'.format(name.replace(' ', '&nbsp;'))
+            self.message += '<h2 style="text-align:center">Open API Specification for deleting the {} Decision Service</h2>'.format(name.replace(' ', '&nbsp;'))
+            self.message += '<pre>'
+            openapi = self.mkDeleteOpenAPI(name)
+            self.message += openapi
+            self.message += '</pre>'
+            self.message += '<p style="text-align:center"><b><a href="/download_delete/{}">Download the OpenAPI Specification for deleting the {} Decision Service</a></b></p>'.format(quote(name), name.replace(' ', '&nbsp;'))
+            self.message += '<div style="text-align:center;margin:auto">[curl '
+            if ('X-Forwarded-Host' in self.headers) and ('X-Forwarded-Proto' in self.headers):
+                self.message += '{}://{}'.format(self.headers['X-Forwarded-Proto'], self.headers['X-Forwarded-Host'])
+            elif 'Host' in self.headers:
+                self.message += '{}'.format(self.headers['Host'])
+            elif 'Forwarded' in self.headers:
+                forwards = self.headers['Forwarded'].split(';')
+                origin = forwards[0].split('=')[1]
+                self.message += '{}'.format(origin)
+            self.message += '/download_delete/{}]'.format(quote(name))
+            self.message += '<p style="text-align:center"><b><a href="/show/{}">{} {}</a></b></p>'.format(name, 'Return to Decision Service', name)
+            self.message += '</body></html>'
+            self.wfile.write(self.message.encode('utf-8'))
+            return
+        elif request.path[0:10] == '/download/':         # Download the Open API specification
+            self.data.logger.info('GET {}'.format(self.path))
+            parts = unquote(request.path[10:])
+            bits = parts.split('/')
+            if len(bits) > 2:
+                # Return Bad Request
+                self.data.logger.warning('GET: {} is not a valid decisionService[/decisionTable]'.format(parts))
+                self.send_error(400)
+                return
+            name = bits[0]
+            self.data.logger.debug('GET - name {}'.format(name))
+            if name not in decisionServices:                # Check that we have this Decision Service
+                # Return Bad Request
+                self.data.logger.warning('GET: {} not in decisionServices'.format(name))
+                self.send_error(400)
+                return
             dmnRules = decisionServices[name]
+
+            if len(bits) == 2:
+                part = bits[1]
+                self.data.logger.debug('GET - part {}'.format(part))
+                sheets = dmnRules.getSheets()
+                if part not in sheets:
+                    self.data.logger.warning('GET: {} not in sheets'.format(part))
+                    self.send_error(400)
+                    return
+                glossary = dmnRules.getTableGlossary(part)
+                filename = secure_filename(name + '_' + part)
+            else:
+                part = None
+                glossary = dmnRules.getGlossary()
+                filename = secure_filename(name)
+
             self.data.logger.info('GET - type(dmnRules) {}'.format(type(dmnRules)))
-            glossary = dmnRules.getGlossary()
             self.data.logger.info('GET - glossary {}'.format(glossary))
-            openapi = self.mkOpenAPI(glossary, name)
+            
+            openapi = self.mkOpenAPI(glossary, name, part)
 
             # Output the web page
             self.send_response(200)
             self.send_header('Content-type', 'text/plain')
-            self.send_header('Content-Disposition', 'attachement; filename="{}.yaml"'.format(name))
+            self.send_header('Content-Disposition', 'attachement; filename="{}.yaml"'.format(filename))
             self.end_headers()
             self.wfile.write(openapi.encode('utf-8'))
             return
-        elif request.path[0:8] == '/delete/':         # Deletel this Decision Service
+        elif request.path[0:8] == '/delete/':         # Delete this Decision Service
             self.data.logger.info('GET {}'.format(self.path))
             name = unquote(request.path[8:])
             self.data.logger.info('GET - name {}'.format(name))
@@ -763,19 +979,40 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
             self.send_header('Content-type', 'text/html')
             self.end_headers()
 
-            if name in decisionServices:            # Delete a Decision Service
-                del decisionServices[name]
-                # Assembling and send the HTML content
-                self.message = '<html><head><title>Decision Central - delete</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'
-                self.message += '<h3 align="center">Decision Service {} has been deleted</h3>'.format(name)
-                self.message += '<p align="center"><b><a href="/">{}</a></b></p>'.format('Return to Decision Central')
-                self.message += '</body></html>'
-                self.wfile.write(self.message.encode('utf-8'))
-            else:
+            if name not in decisionServices:            # Delete a Decision Service
                 # Return Bad Request
                 self.data.logger.warning('GET: {} not in decisionServices'.format(name))
                 self.send_error(400)
                 return
+                
+            del decisionServices[name]
+
+            # Assembling and send the HTML content
+            self.message = '<html><head><title>Decision Central - delete</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'
+            self.message += '<h3 style="text-align:center">Decision Service {} has been deleted</h3>'.format(name)
+            self.message += '<p style="text-align:center"><b><a href="/">{}</a></b></p>'.format('Return to Decision Central')
+            self.message += '</body></html>'
+            self.wfile.write(self.message.encode('utf-8'))
+        elif request.path[0:17] == '/download_delete/':         # Download the Open API specification
+            self.data.logger.info('GET {}'.format(self.path))
+            name = unquote(request.path[17:])
+            self.data.logger.info('GET - name {}'.format(name))
+            if name not in decisionServices:                # Check that we have this Decision Service
+                # Return Bad Request
+                self.data.logger.warning('GET: {} not in decisionServices'.format(name))
+                self.send_error(400)
+                return
+
+            openapi = self.mkDeleteOpenAPI(name)
+            filename = secure_filename(name + '_delete')
+
+            # Output the web page
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.send_header('Content-Disposition', 'attachement; filename="{}.yaml"'.format(filename))
+            self.end_headers()
+            self.wfile.write(openapi.encode('utf-8'))
+            return
         else:
             self.data.logger.warning('GET: bad path - {}'.format(self.path))
             self.send_error(400)
@@ -881,10 +1118,10 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
 
                 # Assembling and send the HTML content
                 self.message = '<html><head><title>Decision Central - No filename {}</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'.format(name)
-                self.message += '<h2 align="center">No filename found in  the upload request</h2>'.format(name)
+                self.message += '<h2 style="text-align:center">No filename found in  the upload request</h2>'.format(name)
                 for i in range(len(status['errors'])):
                     self.message += '<pre>{}</pre>'.format(status['errors'][i])
-                self.message += '<p align="center"><b><a href="/">{}</a></b></p>'.format('Return to Decision Central')
+                self.message += '<p style="text-align:center"><b><a href="/">{}</a></b></p>'.format('Return to Decision Central')
                 self.message += '</body></html>'
                 self.wfile.write(self.message.encode('utf-8'))
                 # Shutdown logging
@@ -900,17 +1137,17 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
             (filename, extn) = os.path.splitext(filename)
             if extn[1:].lower() not in ALLOWED_EXTENSIONS:
                 # Return the error
-                self.data.logger.warning('POST bad file extension:%s', ext)
+                self.data.logger.warning('POST bad file extension:%s', extn)
                 self.send_response(200)
                 self.send_header('Content-type', 'text/html')
                 self.end_headers()
 
                 # Assembling and send the HTML content
                 self.message = '<html><head><title>Decision Central - Invalid filename extension {}</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'.format(name)
-                self.message += '<h2 align="center">Invalid file extension in the upload request</h2>'.format(name)
+                self.message += '<h2 style="text-align:center">Invalid file extension in the upload request</h2>'.format(name)
                 for i in range(len(status['errors'])):
                     self.message += '<pre>{}</pre>'.format(status['errors'][i])
-                self.message += '<p align="center"><b><a href="/">{}</a></b></p>'.format('Return to Decision Central')
+                self.message += '<p style="text-align:center"><b><a href="/">{}</a></b></p>'.format('Return to Decision Central')
                 self.message += '</body></html>'
                 self.wfile.write(self.message.encode('utf-8'))
                 # Shutdown logging
@@ -985,11 +1222,11 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
 
                 # Assembling and send the HTML content
                 self.message = '<html><head><title>Decision Central - Invalid DMN</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'
-                self.message += '<h2 align="center">There were errors in your DMN rules</h2>'
+                self.message += '<h2 style="text-align:center">There were errors in your DMN rules</h2>'
                 for i in range(len(status['errors'])):
                     self.message += '<pre>{}</pre>'.format(status['errors'][i])
                 self.message += '<pre>{}</pre>'.format(xml)
-                self.message += '<p align="center"><b><a href="/">{}</a></b></p>'.format('Return to Decision Central')
+                self.message += '<p style="text-align:center"><b><a href="/">{}</a></b></p>'.format('Return to Decision Central')
                 self.message += '</body></html>'
                 self.wfile.write(self.message.encode('utf-8'))
                 # Shutdown logging
@@ -1012,20 +1249,49 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
 
             # Assembling and send the HTML content
             self.message = '<html><head><title>Decision Central - uploaded</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'
-            self.message += '<h2 align="center">Your DMN compatible Excel workbook has been successfully uploaded</h2>'
-            self.message += '<h3 align="center">Your Decision Service has been created</h3>'
-            self.message += '<p align="center"><b><a href="/">{}</a></b></p>'.format('Return to Decision Central')
+            self.message += '<h2 style="text-align:center">Your DMN compatible Excel workbook or DMN compliant XML file has been successfully uploaded</h2>'
+            self.message += '<h3 style="text-align:center">Your Decision Service has been created</h3>'
+            self.message += '<p style="text-align:center"><b><a href="/">{}</a></b></p>'.format('Return to Decision Central')
             self.message += '</body></html>'
             self.wfile.write(self.message.encode('utf-8'))
 
         elif request.path[0:5] == '/api/':         # An API request for a decision
-            name = unquote(request.path[5:])
-            if name not in decisionServices:                # Check that we have this Decision Service
+            parts = unquote(request.path[5:])
+            bits = parts.split('/')
+            if len(bits) > 2:
                 # Return Bad Request
-                self.data.logger.warning('GET: {} not in decisionServides'.format(name))
+                self.data.logger.warning('GET: {} is not a valid decisionService[/decisionTable]'.format(parts))
                 self.send_error(400)
                 return
-            dmnRules = decisionServices[name]
+            name = bits[0]
+            if len(bits) == 2:
+                part = bits[1]
+                self.data.logger.debug('GET - part {}'.format(part))
+                if not name.endswith('_table'):
+                    self.data.logger.warning('GET: {} is not a valid decisionService[/decisionTable]'.format(parts))
+                    self.send_error(400)
+                    return
+                else:
+                    name = name[:-6]
+                    if name not in decisionServices:                # Check that we have this Decision Service
+                        # Return Bad Request
+                        self.data.logger.warning('GET: {} not in decisionServices'.format(name))
+                        self.send_error(400)
+                        return
+                dmnRules = decisionServices[name]
+                sheets = dmnRules.getSheets()
+                if part not in sheets:
+                    self.data.logger.warning('GET: {} not in sheets'.format(part))
+                    self.send_error(400)
+                    return
+            else:
+                part = None
+                if name not in decisionServices:                # Check that we have this Decision Service
+                    # Return Bad Request
+                    self.data.logger.warning('GET: {} not in decisionServices'.format(name))
+                    self.send_error(400)
+                    return
+                dmnRules = decisionServices[name]
 
             # Get the get the Variables and their values - could be from the web page, or a client app following the OpenAPI specification
             content_len = int(self.headers['Content-Length'])
@@ -1076,7 +1342,10 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
 
             # Now make the decision
             self.data.logger.info('POST - making decision based upon {}'.format(self.data.data))
-            (status, self.data.newData) = dmnRules.decide(self.data.data)
+            if len(parts) == 1:
+                (status, self.data.newData) = dmnRules.decide(self.data.data)
+            else:
+                (status, self.data.newData) = dmnRules.decideTables(self.data.data, [part])
             if 'errors' in status:
                 self.data.logger.warning('POST - bad status from decide()')
                 self.data.logger.warning(status)
@@ -1097,10 +1366,10 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
 
                     # Assembling and send the HTML content
                     self.message = '<html><head><title>Decision Central - bad status from Decision Service {}</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'.format(name)
-                    self.message += '<h2 align="center">Your Decision Service {} returned a bad status</h2>'.format(name)
+                    self.message += '<h2 style="text-align:center">Your Decision Service {} returned a bad status</h2>'.format(name)
                     for i in range(len(status['errors'])):
                         self.message += '<pre>{}</pre>'.format(status['errors'][i])
-                    self.message += '<p align="center"><b><a href="/">{}</a></b></p>'.format('Return to Decision Central')
+                    self.message += '<p style="text-align:center"><b><a href="/">{}</a></b></p>'.format('Return to Decision Central')
                     self.message += '</body></html>'
                     self.wfile.write(self.message.encode('utf-8'))
                     # Shutdown logging
@@ -1128,18 +1397,19 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                     newData = self.data.newData[-1]
                 else:
                     newData = self.data.newData
+                returnData = {}
                 for thisVariable in newData['Result']:
                     thisValue = newData['Result'][thisVariable]
                     if isinstance(thisValue, dict):
                         returnData['Result'][variable] = {}
                         for key in thisValue:
-                            returnData['Result'][variable][key] = convertOut(thisValue[j])
+                            returnData['Result'][variable][key] = self.convertOut(thisValue[j])
                     elif isinstance(thisValue, list):         # The last executed Decision Table was a COLLECTION
                         returnData['Result'][variable] = []
                         for j in range(len(thisValue)):
-                            returnData['Result'][variable].append(convertOut(thisValue[j]))
+                            returnData['Result'][variable].append(self.convertOut(thisValue[j]))
                     else:
-                        returnData['Result'][variable] = convertOut(thisValue)
+                        returnData['Result'][variable] = self.convertOut(thisValue)
                 if isinstance(newData['Executed Rule'], list):           # The last executed Decision Table was RULE ORDER, OUTPUT ORDER or COLLECTION
                     for i in range(len(newData['Executed Rule'])):
                         returnData['Executed Rule'].append([])
@@ -1152,8 +1422,8 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                     returnData['Executed Rule'].append(executedDecision)
                     returnData['Executed Rule'].append(decisionTable)
                     returnData['Executed Rule'].append(ruleId)
-                newData['Status'] = status
-                self.data.response = json.dumps(newData)
+                returnData['Status'] = status
+                self.data.response = json.dumps(returnData)
                 self.data.response = self.data.response.encode('utf-8')
                 self.wfile.write(self.data.response)
             else:
@@ -1187,18 +1457,19 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                 if isinstance(newData['Executed Rule'], list):           # The last executed Decision Table was RULE ORDER, OUTPUT ORDER or COLLECTION
                     for j in range(len(newData['Executed Rule'])):
                         (executedDecision, decisionTable,ruleId) = newData['Executed Rule'][j]
-                        message += '<tr><td style="border:2px solid">{}</td>'.format(executedDecision)
-                        message += '<td style="border:2px solid">{}</td>'.format(decisionTable)
-                        message += '<td style="border:2px solid">{}</td></tr>'.format(ruleId)
-                        message += '<tr>'
+                        self.message += '<tr><td style="border:2px solid">{}</td>'.format(executedDecision)
+                        self.message += '<td style="border:2px solid">{}</td>'.format(decisionTable)
+                        self.message += '<td style="border:2px solid">{}</td></tr>'.format(ruleId)
+                        self.message += '<tr>'
                 else:
                     (executedDecision, decisionTable,ruleId) = newData['Executed Rule']
-                    message += '<tr><td style="border:2px solid">{}</td>'.format(executedDecision)
-                    message += '<td style="border:2px solid">{}</td>'.format(decisionTable)
-                    message += '<td style="border:2px solid">{}</td></tr>'.format(ruleId)
-                    message += '<tr>'
+                    self.message += '<tr><td style="border:2px solid">{}</td>'.format(executedDecision)
+                    self.message += '<td style="border:2px solid">{}</td>'.format(decisionTable)
+                    self.message += '<td style="border:2px solid">{}</td></tr>'.format(ruleId)
+                    self.message += '<tr>'
                 self.message += '</table>'
-                self.message += '<p align="center"><b><a href="/">{}</a></b></p>'.format('Return to Decision Central')
+                self.message += '<p style="text-align:center"><b><a href="/show/{}">{} {}</a></b></p>'.format(name, 'Return to Decision Service', name)
+                self.message += '<p style="text-align:center"><b><a href="/">{}</a></b></p>'.format('Return to Decision Central')
                 self.message += '</body></html>'
                 self.wfile.write(self.message.encode('utf-8'))
         else:
