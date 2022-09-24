@@ -39,6 +39,10 @@ import argparse
 import logging
 import copy
 import pySFeel
+from pySFeel import SFeelLexer
+import re
+import csv
+import ast
 import json
 import datetime
 import dateutil.parser, dateutil.tz
@@ -111,164 +115,94 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
         return
 
 
-    def convertIn(self, thisValue):
-        if isinstance(thisValue, int):
-            return float(thisValue)
-        elif isinstance(thisValue, dict):
-            for item in thisValue:
-                thisValue[item] = self.convertIn(thisValue[item])
-        elif isinstance(thisValue, list):
-            for i in range(len(thisValue)):
-                thisValue[i] = self.convertIn(thisValue[i])
-        elif isinstance(thisValue, str):
-            if thisValue == '':
-                return None
-            tokens = self.data.lexer.tokenize(thisValue)
-            yaccTokens = []
-            for token in tokens:
-                yaccTokens.append(token)
-            self.data.logger.info('POST - tokens {}'.format(yaccTokens))
-            if len(yaccTokens) != 1:
-                if (thisValue[0] != '"') or (thisValue[-1] != '"'):
-                    return '"' + thisValue + '"'
-                else:
-                    return thisValue
-            elif yaccTokens[0].type == 'NUMBER':
-                    return float(thisValue)
-            elif yaccTokens[0].type == 'BOOLEAN':
-                if thisValue == 'true':
-                    return True
-                elif thisValue == 'false':
-                    return False
-                elif thisValue == 'null':
-                    return None
-            elif yaccTokens[0].type == 'NAME':
-                if thisValue == 'true':
-                    return True
-                elif thisValue == 'True':
-                    return True
-                elif thisValue == 'TRUE':
-                    return True
-                elif thisValue == 'false':
-                    return False
-                elif thisValue == 'False':
-                    return False
-                elif thisValue == 'FALSE':
-                    return False
-                elif thisValue == 'none':
-                    return None
-                elif thisValue == 'None':
-                    return None
-                elif thisValue == 'null':
-                    return None
-                else:
-                    return thisValue
-            elif yaccTokens[0].type == 'STRING':
-                return thisValue[1:-1]
-            elif yaccTokens[0].type == 'DTDURATION':
-                sign = 0
-                if thisValue[0] == '-':
-                    sign = -1
-                    thisValue = thisValue[1:]     # skip -
-                thisValue = thisValue[1:]         # skip P
-                days = seconds = milliseconds = 0
-                if thisValue[0] != 'T':          # days is optional
-                    parts = thisValue.split('D')
-                    if len(parts[0]) > 0:
-                        days = int(parts[0])
-                    thisValue = parts[1]
-                if len(thisValue) > 0:
-                    thisValue = thisValue[1:]         # Skip T
-                    parts = thisValue.split('H')
-                    if len(parts) == 2:
-                        if len(parts[0]) > 0:
-                            seconds = int(parts[0]) * 60 * 60
-                        thisValue = parts[1]
-                    parts = thisValue.split('M')
-                    if len(parts) == 2:
-                        if len(parts[0]) > 0:
-                            seconds += int(parts[0]) * 60
-                        thisValue = parts[1]
-                    parts = thisValue.split('S')
-                    if len(parts) == 2:
-                        if len(parts[0]) > 0:
-                            sPart = float(parts[0])
-                            seconds += int(sPart)
-                            milliseconds = int((sPart * 1000)) % 1000
-                if sign == 0:
-                    return datetime.timedelta(days=days, seconds=seconds, milliseconds=milliseconds)
-                else:
-                    return -datetime.timedelta(days=days, seconds=seconds, milliseconds=milliseconds)
-            elif yaccTokens[0].type == 'YMDURATION':
-                sign = 0
-                if thisValue == '-':
-                    sign = -1
-                    thisValue = thisValue[1:]     # skip -
-                thisValue = thisValue[1:]         # skip P
-                months = 0
-                parts = thisValue.split('Y')
-                months = int(parts[0]) * 12
-                parts = parts[1].split('M')
-                if len(parts[0]) > 0:
-                    months += int(parts[0])
-                if sign == 0:
-                    return int(months)
-                else:
-                    return -int(months)
-            elif yaccTokens[0].type == 'DATETIME':
-                parts = thisValue.split('@')
-                thisDateTime = dateutil.parser.parse(parts[0])
-                if len(parts) > 1:
-                    thisZone = dateutil.tz.gettz(parts[1])
-                    if thisZone is not None:
-                        try:
-                            thisDateTime = thisDateTime.replace(tzinfo=thisZone)
-                        except:
-                            thisDateTime = thisDateTime
-                        thisDateTime = thisDateTime
-                return thisDateTime
-            elif yaccTokens[0].type == 'DATE':
-                return dateutil.parser.parse(thisValue).date()
-            elif yaccTokens[0].type == 'TIME':
-                parts = thisValue.split('@')
-                thisTime =  dateutil.parser.parse(parts[0]).timetz()     # A time with timezone
-                if len(parts) > 1:
-                    thisZone = dateutil.tz.gettz(parts[1])
-                    if thisZone is not None:
-                        try:
-                            thisTime = thisTime.replace(tzinfo=thisZone)
-                        except:
-                            thisTime = thisTime
-                        thisTime = thisTime
-                return thisTime
-            else:
-                return thisValue
+    def convertAtString(self, thisString):
+        # Convert an @string
+        (status, newValue) = self.data.parser.sFeelParse(thisString[2:-1])
+        if 'errors' in status:
+            return thisString
         else:
+            return newValue
+
+
+    def convertInWeb(self, thisValue):
+        # Convert a value (string) from the web form
+        if not isinstance(thisValue, str):
             return thisValue
+        try:
+            newValue = ast.literal_eval(thisValue)
+        except:
+            newValue = thisValue
+        return self.convertIn(newValue)
+
+
+    def convertIn(self, newValue):
+        if isinstance(newValue, dict):
+            for key in newValue:
+                if isinstance(newValue[key], int):
+                    newValue[key] = float(newValue[key])
+                elif isinstance(newValue[key], str) and (newValue[key][0:2] == '@"') and (newValue[key][-1] == '"'):
+                    newValue[key] = self.convertAtString(newValue[key])
+                elif isinstance(newValue[key], dict) or isinstance(newValue[key], list):
+                    newValue[key] = self.convertIn(newValue[key])
+        elif isinstance(newValue, list):
+            for i in range(len(newValue)):
+                if isinstance(newValue[i], int):
+                    newValue[i] = float(newValue[i])
+                elif isinstance(newValue[i], str) and (newValue[i][0:2] == '@"') and (newValue[i][-1] == '"'):
+                    newValue[i] = self.convertAtString(newValue[i])
+                elif isinstance(newValue[i], dict) or isinstance(newValue[i], list):
+                    newValue[i] = self.convertIn(newValue[i])
+        elif isinstance(newValue, str) and (newValue[0:2] == '@"') and (newValue[-1] == '"'):
+            newValue = self.convertAtString(newValue)
+        return newValue
 
 
     def convertOut(self, thisValue):
         if isinstance(thisValue, datetime.date):
-            return thisValue.isoformat()
+            return '@"' + thisValue.isoformat() +'"'
         elif isinstance(thisValue, datetime.datetime):
-            return thisValue.isoformat(sep='T')
+            return '@"' + thisValue.isoformat(sep='T') +'"'
         elif isinstance(thisValue, datetime.time):
-            return thisValue.isoformat()
+            return '@"' + thisValue.isoformat() + '"'
         elif isinstance(thisValue, datetime.timedelta):
+            sign = ''
             duration = thisValue.total_seconds()
+            if duration < 0:
+                sign = '-'
+                duration = -duration
             secs = duration % 60
             duration = int(duration / 60)
             mins = duration % 60
             duration = int(duration / 60)
             hours = duration % 24
             days = int(duration / 24)
-            return 'P%dDT%dH%dM%dS' % (days, hours, mins, secs)
+            return '@"%sP%dDT%dH%dM%fS"' % (sign, days, hours, mins, secs)
+        elif isinstance(thisValue, bool):
+            if thisValue:
+                return 'true'
+            else:
+                return 'false'
+        elif isinstance(thisValue, int):
+            sign = ''
+            if thisValue < 0:
+                thisValue = -thisValue
+                sign = '-'
+            years = int(thisValue / 12)
+            months = (thisValue % 12)
+            return '@"%sP%dY%dM"' % (sign, years, months)
+        elif isinstance(thisValue, tuple) and (len(thisValue) == 4):
+            (lowEnd, lowVal, highVal, highEnd) = thisValue
+            return '@"' + lowEnd + str(lowVal) + ' .. ' + str(highVal) + highEnd
+        elif thisValue is None:
+            return 'null'
         elif isinstance(thisValue, dict):
             for item in thisValue:
                 thisValue[item] = self.convertOut(thisValue[item])
+            return thisValue
         elif isinstance(thisValue, list):
             for i in range(len(thisValue)):
                 thisValue[i] = self.convertOut(thisValue[i])
+            return thisValue
         else:
             return thisValue
 
@@ -327,6 +261,15 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
         thisAPI.append('      type: object')
         thisAPI.append('      properties:')
         for concept in glossary:
+            if concept != 'Data':
+                thisAPI.append('        "{}":'.format(concept))
+                thisAPI.append('          type: array')
+                thisAPI.append('          items:')
+                thisAPI.append('            type: object')
+                thisAPI.append('            properties:')
+                for variable in glossary[concept]:
+                    thisAPI.append('              "{}":'.format(variable[len(concept)+1:]))
+                    thisAPI.append('                type: string')
             for variable in glossary[concept]:
                 thisAPI.append('        "{}":'.format(variable))
                 thisAPI.append('          type: string')
@@ -604,23 +547,21 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                 self.message += '<td>'
                 self.message += '<form id="form" action ="{}" method="post">'.format('/api/' + quote(name))
                 self.message += '<h5>Enter values for these Variables</h5>'
-                self.message += '<table>'
+                self.message += '<table style="border-spacing:0">'
                 for concept in glossary:
-                    firstLine = True
+                    if concept != 'Data':
+                        self.message += '<tr><td>{}</td>'.format(concept)
+                        self.message += '<td colspan="3"><input type="text" name="{}" style="text-align:left;width:100%"></input></td></tr>'.format(concept)
                     for variable in glossary[concept]:
                         self.message += '<tr>'
-                        if firstLine:
-                            self.message += '<td>{}</td><td style="text-align=right">{}</td>'.format(concept, variable)
-                            firstLine = False
-                        else:
-                            self.message += '<td></td><td style="text-align=right">{}</td>'.format(variable)
-                        self.message += '<td><input type="text" name="{}" style="text-align=left"></input></td>'.format(variable)
+                        self.message += '<td></td><td style="text-align:right">{}</td>'.format(variable)
+                        self.message += '<td><input type="text" name="{}" style="text-align:left"></input></td>'.format(variable)
                         if len(glossaryNames) > 1:
-                            (FEELname, variable, attributes) = glossary[concept][variable]
+                            (FEELname, value, attributes) = glossary[concept][variable]
                             if len(attributes) == 0:
-                                self.message += '<td style="text-align=left"></td>'
+                                self.message += '<td style="text-align:left"></td>'
                             else:
-                                self.message += '<td style="text-align=left">{}</td>'.format(attributes[0])
+                                self.message += '<td style="text-align:left">{}</td>'.format(attributes[0])
                         self.message += '</tr>'
                 self.message += '</table>'
                 self.message += '<h5>then click the "Make a Decision" button</h5>'
@@ -747,7 +688,7 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                                     inDecide = False
                             else:
                                 if decision[i][j] == '-':
-                                    self.message += '<td style="text-align:center" style="border:2px solid">{}</td>'.format(decision[i][j])
+                                    self.message += '<td style="text-align:center;border:2px solid">{}</td>'.format(decision[i][j])
                                 else:
                                     self.message += '<td style="border:2px solid">{}</td>'.format(decision[i][j])
                         self.message += '</tr>'
@@ -813,17 +754,17 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                         for variable in glossary[concept]:
                             self.message += '<tr>'
                             if firstLine:
-                                self.message += '<td>{}</td><td style="text-align=right">{}</td>'.format(concept, variable)
+                                self.message += '<td>{}</td><td style="text-align:right">{}</td>'.format(concept, variable)
                                 firstLine = False
                             else:
-                                self.message += '<td></td><td style="text-align=right">{}</td>'.format(variable)
-                            self.message += '<td><input type="text" name="{}" style="text-align=left"></input></td>'.format(variable)
+                                self.message += '<td></td><td style="text-align:right">{}</td>'.format(variable)
+                            self.message += '<td><input type="text" name="{}" style="text-align:left"></input></td>'.format(variable)
                             if len(glossaryNames) > 1:
                                 (FEELname, variable, attributes) = glossary[concept][variable]
                                 if len(attributes) == 0:
-                                    self.message += '<td style="text-align=left"></td>'
+                                    self.message += '<td style="text-align:left"></td>'
                                 else:
-                                    self.message += '<td style="text-align=left">{}</td>'.format(attributes[0])
+                                    self.message += '<td style="text-align:left">{}</td>'.format(attributes[0])
                             self.message += '</tr>'
                     self.message += '</table>'
                     self.message += '<h5>then click the "Make a Decision" button</h5>'
@@ -1216,7 +1157,7 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
 
             if 'errors' in status:
                 # Return the error
-                self.send_response(200)
+                self.send_response(400)
                 self.send_header('Content-type', 'text/html')
                 self.end_headers()
 
@@ -1342,7 +1283,7 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
 
             # Now make the decision
             self.data.logger.info('POST - making decision based upon {}'.format(self.data.data))
-            if len(parts) == 1:
+            if part is None:
                 (status, self.data.newData) = dmnRules.decide(self.data.data)
             else:
                 (status, self.data.newData) = dmnRules.decideTables(self.data.data, [part])
@@ -1351,13 +1292,15 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                 self.data.logger.warning(status)
 
                 if accept_type == 'application/json':
+                    self.send_response(200)
+                    self.send_header('Content-type', 'application/json')
+                    self.end_headers()
                     newData = {}
                     newData['Result'] = {}
                     newData['Executed Rule'] = []
                     newData['Status'] = status
                     self.data.response = json.dumps(newData)
-                    self.data.response = self.data.response.encode('utf-8')
-                    self.wfile.write(self.data.response)
+                    self.wfile.write(self.data.response.encode('utf-8'))
                 else:
                     # Return the error
                     self.send_response(200)
@@ -1372,15 +1315,15 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                     self.message += '<p style="text-align:center"><b><a href="/">{}</a></b></p>'.format('Return to Decision Central')
                     self.message += '</body></html>'
                     self.wfile.write(self.message.encode('utf-8'))
-                    # Shutdown logging
-                    for hdlr in self.data.logger.handlers:
-                        hdlr.flush()
-                    self.data.websh.flush()
-                    self.data.logStream.close()
-                    self.data.websh.close()
-                    self.data.logger.removeHandler(self.data.websh)
-                    del self.data
-                    return
+                # Shutdown logging
+                for hdlr in self.data.logger.handlers:
+                    hdlr.flush()
+                self.data.websh.flush()
+                self.data.logStream.close()
+                self.data.websh.close()
+                self.data.logger.removeHandler(self.data.websh)
+                del self.data
+                return
             self.data.logger.info('POST - it worked {}'.format(self.data.newData))
 
             # Check if JSON or HTML response required
@@ -1393,39 +1336,47 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                 self.end_headers()
 
                 # Return the results dictionary
-                if isinstance(self.data.newData, list):
-                    newData = self.data.newData[-1]
-                else:
-                    newData = self.data.newData
                 returnData = {}
-                for thisVariable in newData['Result']:
-                    thisValue = newData['Result'][thisVariable]
-                    if isinstance(thisValue, dict):
-                        returnData['Result'][variable] = {}
-                        for key in thisValue:
-                            returnData['Result'][variable][key] = self.convertOut(thisValue[j])
-                    elif isinstance(thisValue, list):         # The last executed Decision Table was a COLLECTION
-                        returnData['Result'][variable] = []
-                        for j in range(len(thisValue)):
-                            returnData['Result'][variable].append(self.convertOut(thisValue[j]))
-                    else:
-                        returnData['Result'][variable] = self.convertOut(thisValue)
-                if isinstance(newData['Executed Rule'], list):           # The last executed Decision Table was RULE ORDER, OUTPUT ORDER or COLLECTION
-                    for i in range(len(newData['Executed Rule'])):
-                        returnData['Executed Rule'].append([])
-                        (executedDecision, decisionTable,ruleId) = newData['Executed Rule'][i]
-                        returnData['Executed Rule'][-1].append(executedDecision)
-                        returnData['Executed Rule'][-1].append(decisionTable)
-                        returnData['Executed Rule'][-1].append(ruleId)
+                returnData['Executed Rule'] = []
+                if isinstance(self.data.newData, list):
+                    for i in range(len(self.data.newData)):
+                        if isinstance(self.data.newData[i]['Executed Rule'], list):           # The last executed Decision Table was RULE ORDER, OUTPUT ORDER or COLLECTION
+                            for j in range(len(self.data.newData[i]['Executed Rule'])):
+                                returnData['Executed Rule'].append([])
+                                (executedDecision, decisionTable, ruleId) = self.data.newData[i]['Executed Rule'][j]
+                                returnData['Executed Rule'][-1].append(executedDecision)
+                                returnData['Executed Rule'][-1].append(decisionTable)
+                                returnData['Executed Rule'][-1].append(ruleId)
+                        else:
+                            returnData['Executed Rule'].append([])
+                            (executedDecision, decisionTable, ruleId) = self.data.newData[i]['Executed Rule']
+                            returnData['Executed Rule'][-1].append(executedDecision)
+                            returnData['Executed Rule'][-1].append(decisionTable)
+                            returnData['Executed Rule'][-1].append(ruleId)
+                    if len(self.data.newData) > 0:
+                        self.data.newData = self.data.newData[-1]
                 else:
-                    (executedDecision, decisionTable,ruleId) = newData['Executed Rule']
-                    returnData['Executed Rule'].append(executedDecision)
-                    returnData['Executed Rule'].append(decisionTable)
-                    returnData['Executed Rule'].append(ruleId)
+                    if isinstance(self.data.newData['Executed Rule'], list):           # The last executed Decision Table was RULE ORDER, OUTPUT ORDER or COLLECTION
+                        for i in range(len(self.data.newData['Executed Rule'])):
+                            returnData['Executed Rule'].append([])
+                            (executedDecision, decisionTable, ruleId) = self.data.newData['Executed Rule'][i]
+                            returnData['Executed Rule'][-1].append(executedDecision)
+                            returnData['Executed Rule'][-1].append(decisionTable)
+                            returnData['Executed Rule'][-1].append(ruleId)
+                    else:
+                        (executedDecision, decisionTable, ruleId) = self.data.newData['Executed Rule']
+                        returnData['Executed Rule'].append(executedDecision)
+                        returnData['Executed Rule'].append(decisionTable)
+                        returnData['Executed Rule'].append(ruleId)
+                returnData['Result'] = {}
+                if 'Result' in self.data.newData:
+                    for variable in self.data.newData['Result']:
+                        value = self.data.newData['Result'][variable]
+                        returnData['Result'][variable] = self.convertOut(value)
                 returnData['Status'] = status
+
                 self.data.response = json.dumps(returnData)
-                self.data.response = self.data.response.encode('utf-8')
-                self.wfile.write(self.data.response)
+                self.wfile.write(self.data.response.encode('utf-8'))
             else:
                 # Now output the web page
                 self.send_response(200)
@@ -1439,7 +1390,7 @@ class decisionCentralHandler(BaseHTTPRequestHandler):
                 self.message += '<table style="width:70%">'
                 self.message += '<tr><th style="border:2px solid">Variable</th>'
                 self.message += '<th style="border:2px solid">Value</th></tr>'
-                if isinstance(self.data.newData, list):
+                if isinstance(self.data.newData, list) and (len(self.data.newData) > 0):
                     newData = self.data.newData[-1]
                 else:
                     newData = self.data.newData

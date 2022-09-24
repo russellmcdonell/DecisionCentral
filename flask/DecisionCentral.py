@@ -29,6 +29,10 @@ from urllib.parse import urlparse, urlencode, parse_qs, quote, unquote
 from openpyxl import load_workbook
 import pyDMNrules
 import pySFeel
+from pySFeel import SFeelLexer
+import re
+import csv
+import ast
 import copy
 import logging
 
@@ -39,6 +43,7 @@ app = Flask(__name__)
 
 decisionServices = {}        # The dictionary of currently defined Decision services
 lexer = pySFeel.SFeelLexer()
+parser = pySFeel.SFeelParser()
 
 def mkOpenAPI(glossary, name, sheet):
     thisAPI = []
@@ -94,6 +99,15 @@ def mkOpenAPI(glossary, name, sheet):
     thisAPI.append('      type: object')
     thisAPI.append('      properties:')
     for concept in glossary:
+        if concept != 'Data':
+            thisAPI.append('        "{}":'.format(concept))
+            thisAPI.append('          type: array')
+            thisAPI.append('          items:')
+            thisAPI.append('            type: object')
+            thisAPI.append('            properties:')
+            for variable in glossary[concept]:
+                thisAPI.append('              "{}":'.format(variable[len(concept)+1:]))
+                thisAPI.append('                type: string')
         for variable in glossary[concept]:
             thisAPI.append('        "{}":'.format(variable))
             thisAPI.append('          type: string')
@@ -232,165 +246,94 @@ def mkDeleteOpenAPI(name):
     return '\n'.join(thisAPI)
 
 
-def convertIn(thisValue):
-    if isinstance(thisValue, int):
-        return float(thisValue)
-    elif isinstance(thisValue, dict):
-        for item in thisValue:
-            thisValue[item] = convertIn(thisValue[item])
-    elif isinstance(thisValue, list):
-        for i in range(len(thisValue)):
-            thisValue[i] = convertIn(thisValue[i])
-    elif isinstance(thisValue, str):
-        if thisValue == '':
-            return None
-        tokens = lexer.tokenize(thisValue)
-        yaccTokens = []
-        for token in tokens:
-            yaccTokens.append(token)
-        if len(yaccTokens) != 1:
-            if (thisValue[0] != '"') or (thisValue[-1] != '"'):
-                return '"' + thisValue + '"'
-            else:
-                return thisValue
-        elif yaccTokens[0].type == 'NUMBER':
-                return float(thisValue)
-        elif yaccTokens[0].type == 'BOOLEAN':
-            if thisValue == 'true':
-                return True
-            elif thisValue == 'false':
-                return False
-            elif thisValue == 'null':
-                return None
-        elif yaccTokens[0].type == 'NAME':
-            if thisValue == 'true':
-                return True
-            elif thisValue == 'True':
-                return True
-            elif thisValue == 'TRUE':
-                return True
-            elif thisValue == 'false':
-                return False
-            elif thisValue == 'False':
-                return False
-            elif thisValue == 'FALSE':
-                return False
-            elif thisValue == 'none':
-                return None
-            elif thisValue == 'None':
-                return None
-            elif thisValue == 'null':
-                return None
-            else:
-                return thisValue
-        elif yaccTokens[0].type == 'STRING':
-            return thisValue[1:-1]
-        elif yaccTokens[0].type == 'NUMBER':
-            return float(thisValue)
-        elif yaccTokens[0].type == 'DTDURATION':
-            sign = 0
-            if thisValue[0] == '-':
-                sign = -1
-                thisValue = thisValue[1:]     # skip -
-            thisValue = thisValue[1:]         # skip P
-            days = seconds = milliseconds = 0
-            if thisValue[0] != 'T':          # days is optional
-                parts = thisValue.split('D')
-                if len(parts[0]) > 0:
-                    days = int(parts[0])
-                thisValue = parts[1]
-            if len(thisValue) > 0:
-                thisValue = thisValue[1:]         # Skip T
-                parts = thisValue.split('H')
-                if len(parts) == 2:
-                    if len(parts[0]) > 0:
-                        seconds = int(parts[0]) * 60 * 60
-                    thisValue = parts[1]
-                parts = thisValue.split('M')
-                if len(parts) == 2:
-                    if len(parts[0]) > 0:
-                        seconds += int(parts[0]) * 60
-                    thisValue = parts[1]
-                parts = thisValue.split('S')
-                if len(parts) == 2:
-                    if len(parts[0]) > 0:
-                        sPart = float(parts[0])
-                        seconds += int(sPart)
-                        milliseconds = int((sPart * 1000)) % 1000
-            if sign == 0:
-                return datetime.timedelta(days=days, seconds=seconds, milliseconds=milliseconds)
-            else:
-                return -datetime.timedelta(days=days, seconds=seconds, milliseconds=milliseconds)
-        elif yaccTokens[0].type == 'YMDURATION':
-            sign = 0
-            if thisValue == '-':
-                sign = -1
-                thisValue = thisValue[1:]     # skip -
-            thisValue = thisValue[1:]         # skip P
-            months = 0
-            parts = thisValue.split('Y')
-            months = int(parts[0]) * 12
-            parts = parts[1].split('M')
-            if len(parts[0]) > 0:
-                months += int(parts[0])
-            if sign == 0:
-                return int(months)
-            else:
-                return -int(months)
-        elif yaccTokens[0].type == 'DATETIME':
-            parts = thisValue.split('@')
-            thisDateTime = dateutil.parser.parse(parts[0])
-            if len(parts) > 1:
-                thisZone = dateutil.tz.gettz(parts[1])
-                if thisZone is not None:
-                    try:
-                        thisDateTime = thisDateTime.replace(tzinfo=thisZone)
-                    except:
-                        thisDateTime = thisDateTime
-                    thisDateTime = thisDateTime
-            return thisDateTime
-        elif yaccTokens[0].type == 'DATE':
-            return dateutil.parser.parse(thisValue).date()
-        elif yaccTokens[0].type == 'TIME':
-            parts = thisValue.split('@')
-            thisTime =  dateutil.parser.parse(parts[0]).timetz()     # A time with timezone
-            if len(parts) > 1:
-                thisZone = dateutil.tz.gettz(parts[1])
-                if thisZone is not None:
-                    try:
-                        thisTime = thisTime.replace(tzinfo=thisZone)
-                    except:
-                        thisTime = thisTime
-                    thisTime = thisTime
-            return thisTime
-        else:
-            return thisValue
+def convertAtString(thisString):
+    # Convert an @string
+    (status, newValue) = parser.sFeelParse(thisString[2:-1])
+    if 'errors' in status:
+        return thisString
     else:
+        return newValue
+
+
+def convertInWeb(thisValue):
+    # Convert a value (string) from the web form
+    if not isinstance(thisValue, str):
         return thisValue
+    try:
+        newValue = ast.literal_eval(thisValue)
+    except:
+        newValue = thisValue
+    return convertIn(newValue)
+
+
+def convertIn(newValue):
+    if isinstance(newValue, dict):
+        for key in newValue:
+            if isinstance(newValue[key], int):
+                newValue[key] = float(newValue[key])
+            elif isinstance(newValue[key], str) and (newValue[key][0:2] == '@"') and (newValue[key][-1] == '"'):
+                newValue[key] = convertAtString(newValue[key])
+            elif isinstance(newValue[key], dict) or isinstance(newValue[key], list):
+                newValue[key] = convertIn(newValue[key])
+    elif isinstance(newValue, list):
+        for i in range(len(newValue)):
+            if isinstance(newValue[i], int):
+                newValue[i] = float(newValue[i])
+            elif isinstance(newValue[i], str) and (newValue[i][0:2] == '@"') and (newValue[i][-1] == '"'):
+                newValue[i] = convertAtString(newValue[i])
+            elif isinstance(newValue[i], dict) or isinstance(newValue[i], list):
+                newValue[i] = convertIn(newValue[i])
+    elif isinstance(newValue, str) and (newValue[0:2] == '@"') and (newValue[-1] == '"'):
+        newValue = convertAtString(newValue)
+    return newValue
 
 
 def convertOut(thisValue):
     if isinstance(thisValue, datetime.date):
-        return thisValue.isoformat()
+        return '@"' + thisValue.isoformat() + '"'
     elif isinstance(thisValue, datetime.datetime):
-        return thisValue.isoformat(sep='T')
+        return '@"' + thisValue.isoformat(sep='T') + '"'
     elif isinstance(thisValue, datetime.time):
-        return thisValue.isoformat()
+        return '@"' + thisValue.isoformat() + '"'
     elif isinstance(thisValue, datetime.timedelta):
+        sign = ''
         duration = thisValue.total_seconds()
+        if duration < 0:
+            duration = -duration
+            sign = '-'
         secs = duration % 60
         duration = int(duration / 60)
         mins = duration % 60
         duration = int(duration / 60)
         hours = duration % 24
         days = int(duration / 24)
-        return 'P%dDT%dH%dM%dS' % (days, hours, mins, secs)
+        return '@"%sP%dDT%dH%dM%fS"' % (sign, days, hours, mins, secs)
+    elif isinstance(thisValue, bool):
+        if thisValue:
+            return 'true'
+        else:
+            return 'false'
+    elif isinstance(thisValue, int):
+        sign = ''
+        if thisValue < 0:
+            thisValue = -thisValue
+            sign = '-'
+        years = int(thisValue / 12)
+        months = (thisValue % 12)
+        return '@"%sP%dY%dM"' % (sign, years, months)
+    elif isinstance(thisValue, tuple) and (len(thisValue) == 4):
+        (lowEnd, lowVal, highVal, highEnd) = thisValue
+        return '@"' + lowEnd + str(lowVal) + ' .. ' + str(highVal) + highEnd
+    elif thisValue is None:
+        return 'null'
     elif isinstance(thisValue, dict):
         for item in thisValue:
             thisValue[item] = convertOut(thisValue[item])
+        return thisValue
     elif isinstance(thisValue, list):
         for i in range(len(thisValue)):
             thisValue[i] = convertOut(thisValue[i])
+        return thisValue
     else:
         return thisValue
 
@@ -564,23 +507,21 @@ def show_decision_service(decisionServiceName):
     message += '<td>'
     message += '<form id="form" action ="{}" method="post">'.format(url_for('decision_service', decisionServiceName=decisionServiceName))
     message += '<h5>Enter values for these Variables</h5>'
-    message += '<table>'
+    message += '<table style="border-spacing:0">'
     for concept in glossary:
-        firstLine = True
+        if concept != 'Data':
+            message += '<tr><td>{}</td>'.format(concept)
+            message += '<td colspan="3"><input type="text" name="{}" style="text-align:left;width:100%"></input></td></tr>'.format(concept)
         for variable in glossary[concept]:
             message += '<tr>'
-            if firstLine:
-                message += '<td>{}</td><td style="text-align=right">{}</td>'.format(concept, variable)
-                firstLine = False
-            else:
-                message += '<td></td><td style="text-align=right">{}</td>'.format(variable)
-            message += '<td><input type="text" name="{}" style="text-align=left"></input></td>'.format(variable)
+            message += '<td></td><td style="text-align:right">{}</td>'.format(variable)
+            message += '<td><input type="text" name="{}" style="text-align:left"></input></td>'.format(variable)
             if len(glossaryNames) > 1:
                 (FEELname, value, attributes) = glossary[concept][variable]
                 if len(attributes) == 0:
-                    message += '<td style="text-align=left"></td>'
+                    message += '<td style="text-align:left"></td>'
                 else:
-                    message += '<td style="text-align=left">{}</td>'.format(attributes[0])
+                    message += '<td style="text-align:left">{}</td>'.format(attributes[0])
             message += '</tr>'
     message += '</table>'
     message += '<h5>then click the "Make a Decision" button</h5>'
@@ -714,7 +655,7 @@ def show_decision_service_part(decisionServiceName, part):
                         inDecide = False
                 else:
                     if decision[i][j] == '-':
-                        message += '<td style="text-align:center" style="border:2px solid">{}</td>'.format(decision[i][j])
+                        message += '<td style="text-align:center;border:2px solid">{}</td>'.format(decision[i][j])
                     else:
                         message += '<td style="border:2px solid">{}</td>'.format(decision[i][j])
             message += '</tr>'
@@ -747,7 +688,7 @@ def show_decision_service_part(decisionServiceName, part):
     else:                       # Show a worksheet
         sheets = dmnRules.getSheets()
         if part not in sheets:
-            self.data.logger.warning('GET: {} not in sheets'.format(part))
+            logging.warning('GET: {} not in sheets'.format(part))
             message = '<html><head><title>Decision Central - no such Decision Table</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'
             message += '<h2 style="text-align:center">No decision table named {}</h2>'.format(part)
             message += '<p style="text-align:center"><b><a href="{}">{}</a></b></p></body></html>'.format(url_for('splash'), 'Return to Decision Central')
@@ -764,21 +705,19 @@ def show_decision_service_part(decisionServiceName, part):
         # Create the user input form
         message += '<form id="form" action ="{}" method="post">'.format(url_for('decision_service_table', decisionServiceName=decisionServiceName, sheet=part))
         message += '<h5>Enter values for these Variables</h5>'
-        message += '<table>'
+        message += '<table style="border-spacing:0">'
         for concept in glossary:
-            firstLine = True
+            if concept != 'Data':
+                message += '<tr><td>{}</td>'.format(concept)
+                message += '<td colspan="3"><input type="text" name="{}" style="text-align:left;width:100%"></input></td></tr>'.format(concept)
             for variable in glossary[concept]:
                 message += '<tr>'
-                if firstLine:
-                    message += '<td>{}</td><td style="text-align=right">{}</td>'.format(concept, variable)
-                    firstLine = False
-                else:
-                    message += '<td></td><td style="text-align=right">{}</td>'.format(variable)
-                message += '<td><input type="text" name="{}" style="text-align=left"></input></td>'.format(variable)
+                message += '<td></td><td style="text-align:right">{}</td>'.format(variable)
+                message += '<td><input type="text" name="{}" style="text-align:left"></input></td>'.format(variable)
                 if len(glossaryNames) > 1:
                     (FEELname, value, attributes) = glossary[concept][variable]
                     if len(attributes) == 0:
-                        message += '<td style="text-align=left"></td>'
+                        message += '<td style="text-align:left"></td>'
                     else:
                         message += '<td style="text-align=left">{}</td>'.format(attributes[0])
                 message += '</tr>'
@@ -805,7 +744,7 @@ def show_decision_service_part_api(decisionServiceName, sheet):
     dmnRules = decisionServices[decisionServiceName]
     sheets = dmnRules.getSheets()
     if sheet not in sheets:
-        self.data.logger.warning('GET: {} not in sheets'.format(part))
+        logging.warning('GET: {} not in sheets'.format(part))
         message = '<html><head><title>Decision Central - no such Decision Table</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'
         message += '<h2 style="text-align:center">No decision table named {}</h2>'.format(part)
         message += '<p style="text-align:center"><b><a href="{}">{}</a></b></p></body></html>'.format(url_for('splash'), 'Return to Decision Central')
@@ -865,7 +804,7 @@ def download_decision_service_table_api(decisionServiceName, sheet):
     dmnRules = decisionServices[decisionServiceName]
     sheets = dmnRules.getSheets()
     if sheet not in sheets:
-        self.data.logger.warning('GET: {} not in sheets'.format(part))
+        logging.warning('GET: {} not in sheets'.format(part))
         message = '<html><head><title>Decision Central - no such Decision Table</title><link rel="icon" href="data:,"></head><body style="font-size:120%">'
         message += '<h2 style="text-align:center">No decision table named {}</h2>'.format(part)
         message += '<p style="text-align:center"><b><a href="{}">{}</a></b></p></body></html>'.format(url_for('splash'), 'Return to Decision Central')
@@ -928,7 +867,8 @@ def decision_service(decisionServiceName):
     if request.content_type == 'application/x-www-form-urlencoded':         # From the web page
         for variable in request.form:
             value = request.form[variable].strip()
-            data[variable] = convertIn(value)
+            if value != '':
+                data[variable] = convertInWeb(value)
     else:
         data = request.get_json()
         for variable in data:
@@ -964,34 +904,32 @@ def decision_service(decisionServiceName):
         # The structure of the returned data varies depending upon the Hit Policy of the last executed Decision Table
         # We don't have the Hit Policy, but we can work it out
         returnData = {}
-        if isinstance(newData, list):
-            newData = newData[-1]
-        returnData['Result'] = {}
-        for variable in newData['Result']:
-            value = newData['Result'][variable]
-            if isinstance(value, dict):
-                returnData['Result'][variable] = {}
-                for key in value:
-                    returnData['Result'][variable][key] = convertOut(value[j])
-            elif isinstance(value, list):         # The last executed Decision Table was a COLLECTION
-                returnData['Result'][variable] = []
-                for j in range(len(value)):
-                    returnData['Result'][variable].append(convertOut(value[j]))
-            else:
-                returnData['Result'][variable] = convertOut(value)
         returnData['Executed Rule'] = []
-        if isinstance(newData['Executed Rule'], list):           # The last executed Decision Table was RULE ORDER, OUTPUT ORDER or COLLECTION
-            for i in range(len(newData['Executed Rule'])):
-                returnData['Executed Rule'].append([])
-                (executedDecision, decisionTable,ruleId) = newData['Executed Rule'][i]
-                returnData['Executed Rule'][-1].append(executedDecision)
-                returnData['Executed Rule'][-1].append(decisionTable)
-                returnData['Executed Rule'][-1].append(ruleId)
-        else:
+        if isinstance(newData, list):
+            for i in range(len(newData)):
+                if isinstance(newData[i]['Executed Rule'], list):           # The last executed Decision Table was RULE ORDER, OUTPUT ORDER or COLLECTION
+                    for j in range(len(newData[i]['Executed Rule'])):
+                        returnData['Executed Rule'].append([])
+                        (executedDecision, decisionTable,ruleId) = newData[i]['Executed Rule'][j]
+                        returnData['Executed Rule'][-1].append(executedDecision)
+                        returnData['Executed Rule'][-1].append(decisionTable)
+                        returnData['Executed Rule'][-1].append(ruleId)
+                else:
+                    returnData['Executed Rule'].append([])
+                    (executedDecision, decisionTable,ruleId) = newData[i]['Executed Rule']
+                    returnData['Executed Rule'][-1].append(executedDecision)
+                    returnData['Executed Rule'][-1].append(decisionTable)
+                    returnData['Executed Rule'][-1].append(ruleId)
+            newData = newData[-1]
+        elif 'Executed Rule' in newData:
             (executedDecision, decisionTable,ruleId) = newData['Executed Rule']
             returnData['Executed Rule'].append(executedDecision)
             returnData['Executed Rule'].append(decisionTable)
             returnData['Executed Rule'].append(ruleId)
+        returnData['Result'] = {}
+        for variable in newData['Result']:
+            value = newData['Result'][variable]
+            returnData['Result'][variable] = convertOut(value)
         returnData['Status'] = status
         return jsonify(returnData)
     else:
@@ -1050,7 +988,8 @@ def decision_service_table(decisionServiceName, sheet):
     if request.content_type == 'application/x-www-form-urlencoded':         # From the web page
         for variable in request.form:
             value = request.form[variable].strip()
-            data[variable] = convertIn(value)
+            if value != '':
+                data[variable] = convertInWeb(value)
     else:
         data = request.get_json()
         for variable in data:
@@ -1086,34 +1025,41 @@ def decision_service_table(decisionServiceName, sheet):
         # The structure of the returned data varies depending upon the Hit Policy of the last executed Decision Table
         # We don't have the Hit Policy, but we can work it out
         returnData = {}
+        returnData['Executed Rule'] = []
         if isinstance(newData, list):
-            newData = newData[-1]
+            for i in range(len(newData)):
+                if isinstance(newData[i]['Executed Rule'], list):           # The last executed Decision Table was RULE ORDER, OUTPUT ORDER or COLLECTION
+                    for j in range(len(newData[i]['Executed Rule'])):
+                        returnData['Executed Rule'].append([])
+                        (executedDecision, decisionTable, ruleId) = newData[i]['Executed Rule'][j]
+                        returnData['Executed Rule'][-1].append(executedDecision)
+                        returnData['Executed Rule'][-1].append(decisionTable)
+                        returnData['Executed Rule'][-1].append(ruleId)
+                else:
+                    returnData['Executed Rule'].append([])
+                    (executedDecision, decisionTable, ruleId) = newData[i]['Executed Rule']
+                    returnData['Executed Rule'][-1].append(executedDecision)
+                    returnData['Executed Rule'][-1].append(decisionTable)
+                    returnData['Executed Rule'][-1].append(ruleId)
+            if len(newData) > 0:
+                newData = newData[-1]
+        else:
+            if isinstance(newData['Executed Rule'], list):           # The last executed Decision Table was RULE ORDER, OUTPUT ORDER or COLLECTION
+                for i in range(len(newData['Executed Rule'])):
+                    returnData['Executed Rule'].append([])
+                    (executedDecision, decisionTable, ruleId) = newData['Executed Rule'][i]
+                    returnData['Executed Rule'][-1].append(executedDecision)
+                    returnData['Executed Rule'][-1].append(decisionTable)
+                    returnData['Executed Rule'][-1].append(ruleId)
+            else:
+                (executedDecision, decisionTable, ruleId) = newData['Executed Rule']
+                returnData['Executed Rule'].append(executedDecision)
+                returnData['Executed Rule'].append(decisionTable)
+                returnData['Executed Rule'].append(ruleId)
         returnData['Result'] = {}
         for variable in newData['Result']:
             value = newData['Result'][variable]
-            if isinstance(value, dict):
-                returnData['Result'][variable] = {}
-                for key in value:
-                    returnData['Result'][variable][key] = convertOut(value[j])
-            elif isinstance(value, list):         # The last executed Decision Table was a COLLECTION
-                returnData['Result'][variable] = []
-                for j in range(len(value)):
-                    returnData['Result'][variable].append(convertOut(value[j]))
-            else:
-                returnData['Result'][variable] = convertOut(value)
-        returnData['Executed Rule'] = []
-        if isinstance(newData['Executed Rule'], list):           # The last executed Decision Table was RULE ORDER, OUTPUT ORDER or COLLECTION
-            for i in range(len(newData['Executed Rule'])):
-                returnData['Executed Rule'].append([])
-                (executedDecision, decisionTable,ruleId) = newData['Executed Rule'][i]
-                returnData['Executed Rule'][-1].append(executedDecision)
-                returnData['Executed Rule'][-1].append(decisionTable)
-                returnData['Executed Rule'][-1].append(ruleId)
-        else:
-            (executedDecision, decisionTable,ruleId) = newData['Executed Rule']
-            returnData['Executed Rule'].append(executedDecision)
-            returnData['Executed Rule'].append(decisionTable)
-            returnData['Executed Rule'].append(ruleId)
+            returnData['Result'][variable] = convertOut(value)
         returnData['Status'] = status
         return jsonify(returnData)
     else:
@@ -1124,7 +1070,7 @@ def decision_service_table(decisionServiceName, sheet):
         message += '<table style="width:70%">'
         message += '<tr><th style="border:2px solid">Variable</th>'
         message += '<th style="border:2px solid">Value</th></tr>'
-        if isinstance(newData, list):
+        if isinstance(newData, list) and (len(newData) > 0):
             newData = newData[-1]
         for variable in newData['Result']:
             if newData['Result'][variable] == '':

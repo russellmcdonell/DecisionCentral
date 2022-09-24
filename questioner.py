@@ -1,11 +1,11 @@
 #!/usr/bin/env python
 
 '''
-A script to a DMN decision service being hosted by DecisionCentral.
+A script to call a DMN decision service being hosted by DecisionCentral.
 
 SYNOPSIS
 $ python questioner.py [-v loggingLevel|--verbose=logingLevel] [-L logDir|--logDir=logDir] [-l logfile|--logfile=logfile]
-                       [-u url|--url=url] [-i inputCSV|--inputCSV=inputCSV] [-o outputCSV|--outputCSV=outputCSV]
+                       [-u url|--url=url] [-i inputfile|--inputfile=inputfile] [-o outputfile|--outputfile=outputfile]
 
 REQUIRED
 
@@ -22,22 +22,22 @@ The name of a logging file where you want all messages captured.
 
 -u url|--url=url
 The url of the decision service hosted by DecisionCentral
-(default = 'http://localhost:7777/api/Example1')
+(default = 'http://localhost:5000/api/Example1')
 
--i inputCSV|--inputCSV=inputCSV
-The input CSV file of questions (data).
+-i inputfile|--inputfile=inputfile
+The input Excel file of questions (data).
 It must have headings, which will be the names of Variables associated with the decision service.
-(default = 'questions.csv')
+(default = 'questions.xlsx')
 
--o outputCSV|--outputCSV=outputCSV
-The outputCSV file of answers (decisions).
-(default = 'answers.csv')
+-o outputfile|--outputfile=outputfile
+The output Excel file of answers (decisions).
+(default = 'answers.xlsx')
 
 
 The questioner sends JSON data to a decision service hosted on a DecisionCentral server.
-The decision service is defined by a url (default=http://localhost:7777/api/Example1)
-The data (questions) is read from a CSV file (default=questions.csv)
-The answers (decisions) are writen to a CSV file (default=answers.csv)
+The decision service is defined by a url (default=http://localhost:5000/api/Example1)
+The data (questions) is read from an Excel file (default=questions.xlsx)
+The answers (decisions) are writen to an Excel file (default=answers.xlsx)
 
 '''
 
@@ -47,8 +47,12 @@ import os
 import io
 import argparse
 import logging
-import csv
+from openpyxl import Workbook
+import pandas as pd
+import pySFeel
+import requests
 import json
+import datetime
 from urllib.parse import urlparse, urlencode, parse_qs, quote, unquote
 from http.client import parse_headers
 from http import client
@@ -74,6 +78,89 @@ EX_NOPERM = 77        # permission denied
 EX_CONFIG = 78        # configuration error
 
 
+parser = pySFeel.SFeelParser()
+
+
+def convertAtString(thisString):
+    # Convert an @string
+    (status, newValue) = parser.sFeelParse(thisString[2:-1])
+    if 'errors' in status:
+        return thisString
+    else:
+        return newValue
+
+
+def convertIn(newValue):
+    if isinstance(newValue, dict):
+        for key in newValue:
+            if isinstance(newValue[key], int):
+                newValue[key] = float(newValue[key])
+            elif isinstance(newValue[key], str) and (newValue[key][0:2] == '@"') and (newValue[key][-1] == '"'):
+                newValue[key] = convertAtString(newValue[key])
+            elif isinstance(newValue[key], dict) or isinstance(newValue[key], list):
+                newValue[key] = convertIn(newValue[key])
+    elif isinstance(newValue, list):
+        for i in range(len(newValue)):
+            if isinstance(newValue[i], int):
+                newValue[i] = float(newValue[i])
+            elif isinstance(newValue[i], str) and (newValue[i][0:2] == '@"') and (newValue[i][-1] == '"'):
+                newValue[i] = convertAtString(newValue[i])
+            elif isinstance(newValue[i], dict) or isinstance(newValue[i], list):
+                newValue[i] = convertIn(newValue[i])
+    elif isinstance(newValue, str) and (newValue[0:2] == '@"') and (newValue[-1] == '"'):
+        newValue = convertAtString(newValue)
+    return newValue
+
+
+def convertOut(thisValue):
+    if isinstance(thisValue, datetime.date):
+        return '@"' + thisValue.isoformat() + '"'
+    elif isinstance(thisValue, datetime.datetime):
+        return '@"' + thisValue.isoformat(sep='T') + '"'
+    elif isinstance(thisValue, datetime.time):
+        return '@"' + thisValue.isoformat() + '"'
+    elif isinstance(thisValue, datetime.timedelta):
+        sign = ''
+        duration = thisValue.total_seconds()
+        if duration < 0:
+            duration = -duration
+            sign = '-'
+        secs = duration % 60
+        duration = int(duration / 60)
+        mins = duration % 60
+        duration = int(duration / 60)
+        hours = duration % 24
+        days = int(duration / 24)
+        return '@"%sP%dDT%dH%dM%fS"' % (sign, days, hours, mins, secs)
+    elif isinstance(thisValue, bool):
+        return thisValue
+    elif thisValue is None:
+        return thisValue
+    elif isinstance(thisValue, int):
+        sign = ''
+        if thisValue < 0:
+            thisValue = -thisValue
+            sign = '-'
+        years = int(thisValue / 12)
+        months = (thisValue % 12)
+        return '@"%sP%dY%dM"' % (sign, years, months)
+    elif isinstance(thisValue, tuple) and (len(thisValue) == 4):
+        (lowEnd, lowVal, highVal, highEnd) = thisValue
+        return '@"' + lowEnd + str(lowVal) + ' .. ' + str(highVal) + highEnd
+    elif thisValue is None:
+        return 'null'
+    elif isinstance(thisValue, dict):
+        for item in thisValue:
+            thisValue[item] = convertOut(thisValue[item])
+        return thisValue
+    elif isinstance(thisValue, list):
+        for i in range(len(thisValue)):
+            thisValue[i] = convertOut(thisValue[i])
+        return thisValue
+    else:
+        return thisValue
+
+
 
 # The main code
 if __name__ == '__main__':
@@ -88,20 +175,19 @@ Parse the command line arguments and set up general error logging.
 
     # Define the command line options
     parser = argparse.ArgumentParser(prog=progName)
-    parser.add_argument ('-u', '--url', dest='url', default="http://localhost:7777/api/Example1", help='The URL of a decision service hosted by DecisionCentral (default=http://localhost:7777/api/Example1)')
-    parser.add_argument ('-i', '--inputCSV', dest='inputCSV', default="questions.csv", help='The name of the inputCSV file (default=questions.csv)')
-    parser.add_argument ('-o', '--outputCSV', dest='outputCSV', default="answers.csv", help='The name of the outputCSV file (default=answers.csv)')
+    parser.add_argument ('-u', '--url', dest='url', default="http://localhost:5000/api/Example1", help='The URL of a decision service hosted by DecisionCentral (default=http://localhost:5000/api/Example1)')
+    parser.add_argument ('-i', '--inputfile', dest='inputfile', default="questions.xlsx", help='The name of the inputfile file (default=questions.xlsx)')
+    parser.add_argument ('-o', '--outputfile', dest='outputfile', default="answers.xlsx", help='The name of the outputfile file (default=answers.xlsx)')
     parser.add_argument ('-v', '--verbose', dest='verbose', type=int, choices=range(0,5),
                          help='The level of logging\n\t0=CRITICAL,1=ERROR,2=WARNING,3=INFO,4=DEBUG')
     parser.add_argument ('-L', '--logDir', dest='logDir', default='.', help='The name of a logging directory')
     parser.add_argument ('-l', '--logFile', metavar='logFile', dest='logFile', help='The name of the logging file')
-    parser.add_argument ('args', nargs=argparse.REMAINDER)
 
     # Parse the command line options
     args = parser.parse_args()
     url = args.url
-    inputCSV = args.inputCSV
-    outputCSV = args.outputCSV
+    inputfile = args.inputfile
+    outputfile = args.outputfile
     loggingLevel = args.verbose
     logDir = args.logDir
     logFile = args.logFile
@@ -173,98 +259,57 @@ Parse the command line arguments and set up general error logging.
         sys.exit(EX_UNAVAILABLE)
     logging.info('Tested connected to %s:%d', decisionServiceHost, decisionServicePort)
 
+    # Read in questions
+    dfInput = pd.read_excel(inputfile)
+
+    # Create a workbook for the answers
+    wb = Workbook()
+    ws = wb.active
+
+    # Ask the questions and get the answer
+    first = True
+    heading = []
+    for index, row in dfInput.iterrows():
+        inrow = {}
+        for key in row.keys():
+            if first:
+                heading.append(key)
+            if pd.isna(row[key]):            # Map missing data to None
+                inrow[key] = None
+            else:
+                inrow[key] = convertOut(row[key])
+        request = requests.post(url, headers=decisionServiceHeaders, json=inrow)
+        if request.status_code != requests.codes.ok:
+            print('failed - bad request - ', request.text)
+            logging.info('failed - bad request - %s', request.text)
+            continue
+        try:
+            newData = request.json()
+        except:
+            print('failed - bad request - ', request.text)
+            logging.info('failed - bad request - %s', request.text)
+            continue
+        status = newData['Status']
+        result = newData['Result']
+        executedRule = newData['Executed Rule']
+        if 'errors' in status:
+            print('failed - bad status - ', '/'.join(status['errors']))
+            logging.info('failed - bad status - %s', '/'.join(status['errors']))
+            continue
+
+        if first:
+            for key in result.keys():
+                if key not in heading:
+                    heading.append(key)
+            ws.append(heading)
+            first = False
+
+        # Create the output row
+        outrow = []
+        for i in range(len(heading)):
+            outrow.append(convertOut(result[heading[i]]))
+        ws.append(outrow)
+
     # Create the answers file
-    with open(outputCSV, 'wt', newline='') as outputFile:
-        csvwriter = csv.writer(outputFile, dialect=csv.excel)
-        needHeader = True
-        
-        # Open the questions file
-        with open(inputCSV, 'rt', newline='') as inputFile:
-            csvreader = csv.DictReader(inputFile, dialect=csv.excel)
-            for row in csvreader:
-                # Map a few booleans
-                for key in row:
-                    if row[key] == 'True':
-                        row[key] = True
-                    elif row[key] == 'true':
-                        row[key] = True
-                    elif row[key] == 'TRUE':
-                        row[key] = True
-                    elif row[key] == 'False':
-                        row[key] = False
-                    elif row[key] == 'false':
-                        row[key] = False
-                    elif row[key] == 'FALSE':
-                        row[key] = False
-                    elif row[key] == 'None':
-                        row[key] = None
-                    elif row[key] == 'null':
-                        row[key] = None
-                    elif row[key] == '':
-                        row[key] = None
-                
-                # Get the results from the decision service
-                logging.info('Questioning: %s', str(row))
-                params = json.dumps(row)
-                try :
-                    if urlBits.scheme == 'https':
-                        logging.info('https - connecting')
-                        decisionServiceConnection = client.HTTPSConnection(decisionServiceHost, decisionServicePort)
-                    else:
-                        decisionServiceConnection = client.HTTPConnection(decisionServiceHost, decisionServicePort)
-                    decisionServiceConnection.request('POST', url, params, decisionServiceHeaders)
-                    response = decisionServiceConnection.getresponse()
-                    if response.status != 200 :
-                        logging.critical('Invalid response from Decision Service:error %s', str(response.status))
-                        logging.critical('%s', str(response.headers))
-                        logging.shutdown()
-                        sys.stdout.flush()
-                        sys.exit(EX_PROTOCOL)
-                    responseData = response.read()
-                    decisionServiceConnection.close()
-                except (client.NotConnected, client.InvalidURL, client.UnknownProtocol,client.UnknownTransferEncoding,client.UnimplementedFileMode,   client.IncompleteRead, client.ImproperConnectionState, client.CannotSendRequest, client.CannotSendHeader, client.ResponseNotReady, client.BadStatusLine) as e:
-                    logging.critical('Decision Service error:%s', str(e))
-                    logging.shutdown()
-                    sys.stdout.flush()
-                    sys.exit(EX_PROTOCOL)
+    wb.save(outputfile)
 
-                try :
-                    answer = json.loads(responseData)
-                except ValueError as e :
-                    logging.critical('Invalid data from Decision Service:error %s', e)
-                    logging.shutdown()
-                    sys.stdout.flush()
-                    sys.exit(EX_PROTOCOL)
-
-                logging.info('Decision Service success')
-                logging.info('Decision Service returned:%s', str(answer))
-                if needHeader:
-                    header = []
-                    for key in answer:
-                        if key == 'Result':
-                            for resultKey in answer[key]:
-                                header.append(resultKey)
-                    header.append('Excuted Decision')
-                    header.append('Decision Table')
-                    header.append('Rule Id')
-                    header.append('Errors')
-                    csvwriter.writerow(header)
-                    needHeader = False
-
-                # Save the answer
-                print(answer)
-                sys.stdout.flush()
-                output = []
-                if 'errors' in answer['Status']:
-                    for i in range(len(header) - 1):
-                        output.append('')
-                    output.append('/'.join(answer['Status']['errors']))
-                else:
-                    for key in answer['Result']:
-                        output.append(answer['Result'][key])
-                    output.append(answer['Executed Rule'][0])
-                    output.append(answer['Executed Rule'][1])
-                    output.append(answer['Executed Rule'][2])
-                    output.append('')
-                csvwriter.writerow(output)
-                logging.info('Answer saved')
