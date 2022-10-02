@@ -1,7 +1,7 @@
 numpy
 openpyxl
 pandas
-pyDMNrules>=1.4.3
+pyDMNrules>=1.4.4
 pySFeel>=1.4.2
 pytz
 sly
